@@ -1,0 +1,377 @@
+
+import { Dexie, Table } from 'dexie';
+import { 
+  Learner, Teacher, TeacherTransfer, TeacherLeave, Infrastructure, School, AuditLog, TermlyReport,
+  PromotionRecord, JuniorExamResult, StandardisedExamScore, PSLCEResult, PSLCESelection, Asset, FinanceSIG, InspectionRecord
+} from './types';
+
+export class EMISDatabase extends Dexie {
+  learners!: Table<Learner>;
+  teachers!: Table<Teacher>;
+  teacherTransfers!: Table<TeacherTransfer>;
+  teacherLeaves!: Table<TeacherLeave>;
+  infrastructure!: Table<Infrastructure>;
+  schools!: Table<School>;
+  auditLogs!: Table<AuditLog>;
+  termlyReports!: Table<TermlyReport>;
+  promotionRecords!: Table<PromotionRecord>;
+  juniorExams!: Table<JuniorExamResult>;
+  standardExams!: Table<StandardisedExamScore>;
+  pslceResults!: Table<PSLCEResult>;
+  pslceSelections!: Table<PSLCESelection>;
+  assets!: Table<Asset>;
+  financeSIG!: Table<FinanceSIG>;
+  inspections!: Table<InspectionRecord>;
+
+  constructor() {
+    super('Malawi_EMIS_Registry');
+    // Defining database schema versions and stores.
+    this.version(9).stores({
+      learners: '++id, schoolId, lin, nin, surname, gender, class, status, isSNE',
+      teachers: '++id, schoolId, nin, tpNumber, status, teachingGrade, assignedStandard',
+      teacherTransfers: '++id, teacherId, sourceSchoolId, destinationSchoolId, status',
+      teacherLeaves: '++id, teacherId, type, status',
+      infrastructure: '++id, type, condition',
+      schools: '++id, name, emisCode, level, status, district, region, zone',
+      auditLogs: '++id, schoolId, action, timestamp',
+      termlyReports: 'id, schoolId, term, year, status',
+      promotionRecords: '++id, schoolId, year, grade',
+      juniorExams: '++id, schoolId, year, term, grade',
+      standardExams: '++id, schoolId, year, term, studentName',
+      pslceResults: '++id, schoolId, year',
+      pslceSelections: '++id, schoolId, year',
+      assets: '++id, schoolId, category',
+      financeSIG: '++id, schoolId, status',
+      inspections: '++id, schoolId, date'
+    });
+  }
+}
+
+export const db = new EMISDatabase();
+
+export const seedDatabase = async () => {
+  const schoolCount = await db.schools.count();
+  if (schoolCount === 0) {
+    const schoolsToSeed: Partial<School>[] = [
+      {
+        name: 'Lilongwe Demonstration School',
+        emisCode: 'MW-CE-001',
+        registrationNumber: 'REG/PRI/2020/045',
+        level: 'Primary',
+        status: 'active',
+        region: 'Central',
+        district: 'Lilongwe',
+        traditionalAuthority: 'Tsabango',
+        village: 'Area 25',
+        latitude: -13.9626,
+        longitude: 33.7741,
+        accessibility: 'Tarred Road',
+        distanceFromTown: 2,
+        ownership: 'Government',
+        headTeacher: { name: 'Chisomo Phiri', gender: 'F', qualification: 'Degree in Education', appointmentDate: '2018-01-15', contact: '+265 888 123 456' },
+        infrastructure: { classrooms: 24, offices: 4, staffHouses: 6, latrines: 12, libraries: 1, laboratories: 0, waterSource: 'Piped Water', electricitySource: 'Grid', internetAccess: true, landSize: 4.5, landOwnership: 'Government' },
+        yearEstablished: 1968,
+        createdAt: Date.now(),
+        updatedAt: Date.now()
+      },
+      {
+        name: 'Blantyre Secondary School',
+        emisCode: 'MW-SO-102',
+        registrationNumber: 'REG/SEC/2015/012',
+        level: 'Secondary',
+        status: 'active',
+        region: 'Southern',
+        district: 'Blantyre',
+        traditionalAuthority: 'Somba',
+        village: 'Chichiri',
+        latitude: -15.8037,
+        longitude: 35.0216,
+        accessibility: 'Tarred Road',
+        distanceFromTown: 5,
+        ownership: 'Government',
+        headTeacher: { name: 'Mphatso Banda', gender: 'M', qualification: 'Masters in Educational Management', appointmentDate: '2015-09-01', contact: '+265 999 765 432' },
+        infrastructure: { classrooms: 30, offices: 5, staffHouses: 10, latrines: 20, libraries: 1, laboratories: 4, waterSource: 'Piped Water', electricitySource: 'Grid', internetAccess: true, landSize: 12.0, landOwnership: 'Government' },
+        yearEstablished: 1940,
+        createdAt: Date.now(),
+        updatedAt: Date.now()
+      },
+      {
+         name: 'Mzuzu Government Secondary',
+         emisCode: 'MW-NO-201',
+         registrationNumber: 'REG/SEC/1960/001',
+         level: 'Secondary',
+         status: 'active',
+         region: 'Northern',
+         district: 'Mzuzu',
+         traditionalAuthority: 'Mtwalo',
+         village: 'Chasefu',
+         latitude: -11.4580,
+         longitude: 34.0150,
+         accessibility: 'Tarred Road',
+         distanceFromTown: 1,
+         ownership: 'Government',
+         headTeacher: { name: 'Lovemore Phiri', gender: 'M', qualification: 'PhD Education', appointmentDate: '2010-01-01', contact: '+265 888 000 111' },
+         infrastructure: { classrooms: 40, offices: 8, staffHouses: 20, latrines: 30, libraries: 2, laboratories: 6, waterSource: 'Piped Water', electricitySource: 'Grid', internetAccess: true, landSize: 25.0, landOwnership: 'Government' },
+         yearEstablished: 1959,
+         createdAt: Date.now(),
+         updatedAt: Date.now()
+       },
+       {
+         name: 'Dedza Secondary School',
+         emisCode: 'MW-CE-304',
+         registrationNumber: 'REG/SEC/1951/005',
+         level: 'Secondary',
+         status: 'active',
+         region: 'Central',
+         district: 'Dedza',
+         traditionalAuthority: 'Kachere',
+         village: 'Dedza Boma',
+         latitude: -14.3750,
+         longitude: 34.3330,
+         accessibility: 'Tarred Road',
+         distanceFromTown: 2,
+         ownership: 'Government',
+         headTeacher: { name: 'Samuel Gondwe', gender: 'M', qualification: 'Masters Education', appointmentDate: '2012-05-15', contact: '+265 999 555 666' },
+         infrastructure: { classrooms: 35, offices: 6, staffHouses: 15, latrines: 25, libraries: 1, laboratories: 5, waterSource: 'Piped Water', electricitySource: 'Grid', internetAccess: true, landSize: 30.0, landOwnership: 'Government' },
+         yearEstablished: 1950,
+         createdAt: Date.now(),
+         updatedAt: Date.now()
+       },
+       {
+         name: 'Zomba Catholic Secondary',
+         emisCode: 'MW-SO-405',
+         registrationNumber: 'REG/SEC/RC/1942',
+         level: 'Secondary',
+         status: 'active',
+         region: 'Southern',
+         district: 'Zomba',
+         traditionalAuthority: 'Mlumbe',
+         village: 'Zomba City',
+         latitude: -15.3830,
+         longitude: 35.3330,
+         accessibility: 'Tarred Road',
+         distanceFromTown: 1,
+         ownership: 'Faith-Based',
+         headTeacher: { name: 'Sister Maria', gender: 'F', qualification: 'M.Ed Management', appointmentDate: '2016-01-01', contact: '+265 888 222 333' },
+         infrastructure: { classrooms: 28, offices: 4, staffHouses: 8, latrines: 18, libraries: 1, laboratories: 3, waterSource: 'Piped Water', electricitySource: 'Grid', internetAccess: true, landSize: 10.0, landOwnership: 'Church' },
+         yearEstablished: 1942,
+         createdAt: Date.now(),
+         updatedAt: Date.now()
+       },
+       {
+         name: 'Kamuzu Academy',
+         emisCode: 'MW-CE-506',
+         registrationNumber: 'REG/SEC/PVT/1981',
+         level: 'Secondary',
+         status: 'active',
+         region: 'Central',
+         district: 'Kasungu',
+         traditionalAuthority: 'Kaomba',
+         village: 'Mtunthama',
+         latitude: -13.0160,
+         longitude: 33.4830,
+         accessibility: 'Tarred Road',
+         distanceFromTown: 15,
+         ownership: 'Private',
+         headTeacher: { name: 'Andrew Wild', gender: 'M', qualification: 'PhD Classics', appointmentDate: '2020-01-01', contact: '+265 111 000 000' },
+         infrastructure: { classrooms: 50, offices: 15, staffHouses: 60, latrines: 80, libraries: 3, laboratories: 10, waterSource: 'Borehole', electricitySource: 'Grid/Solar', internetAccess: true, landSize: 150.0, landOwnership: 'Trust' },
+         yearEstablished: 1981,
+         createdAt: Date.now(),
+         updatedAt: Date.now()
+       },
+       {
+         name: 'Malawi University of Business & Applied Sciences',
+         emisCode: 'MW-HE-001',
+         registrationNumber: 'REG/UNI/POLY/1965',
+         level: 'Tertiary',
+         status: 'active',
+         region: 'Southern',
+         district: 'Blantyre',
+         traditionalAuthority: 'Blantyre City',
+         village: 'Chichiri',
+         latitude: -15.8000,
+         longitude: 35.0300,
+         accessibility: 'Tarred Road',
+         distanceFromTown: 1,
+         ownership: 'Government',
+         headTeacher: { name: 'Prof. Nancy Chitera', gender: 'F', qualification: 'PhD Mathematics', appointmentDate: '2021-01-01', contact: '+265 1 870 411' },
+         infrastructure: { classrooms: 100, offices: 200, staffHouses: 50, latrines: 150, libraries: 4, laboratories: 80, waterSource: 'Piped Water', electricitySource: 'Grid/Generator', internetAccess: true, landSize: 40.0, landOwnership: 'Government' },
+         yearEstablished: 1965,
+         createdAt: Date.now(),
+         updatedAt: Date.now()
+       },
+       {
+         name: 'Mponela Technical College',
+         emisCode: 'MW-TE-001',
+         registrationNumber: 'REG/TVET/2005/11',
+         level: 'Technical',
+         status: 'active',
+         region: 'Central',
+         district: 'Dowa',
+         traditionalAuthority: 'Mponela',
+         village: 'Mponela Boma',
+         latitude: -13.5330,
+         longitude: 33.7330,
+         accessibility: 'Tarred Road',
+         distanceFromTown: 0,
+         ownership: 'Government',
+         headTeacher: { name: 'Bentry Kaphuka', gender: 'M', qualification: 'M.Tech', appointmentDate: '2019-03-01', contact: '+265 999 111 222' },
+         infrastructure: { classrooms: 15, offices: 3, staffHouses: 5, latrines: 10, libraries: 1, laboratories: 8, waterSource: 'Borehole', electricitySource: 'Grid', internetAccess: true, landSize: 15.0, landOwnership: 'Government' },
+         yearEstablished: 2005,
+         createdAt: Date.now(),
+         updatedAt: Date.now()
+       },
+       {
+         name: 'St. Marys Secondary',
+         emisCode: 'MW-CE-808',
+         registrationNumber: 'REG/SEC/RC/1955',
+         level: 'Secondary',
+         status: 'active',
+         region: 'Central',
+         district: 'Zomba',
+         traditionalAuthority: 'Malemia',
+         village: 'Zomba',
+         latitude: -15.3800,
+         longitude: 35.3200,
+         accessibility: 'Tarred Road',
+         distanceFromTown: 1,
+         ownership: 'Faith-Based',
+         headTeacher: { name: 'Sister Agnes', gender: 'F', qualification: 'Masters Education', appointmentDate: '2014-01-01', contact: '+265 888 999 000' },
+         infrastructure: { classrooms: 20, offices: 3, staffHouses: 6, latrines: 15, libraries: 1, laboratories: 2, waterSource: 'Piped Water', electricitySource: 'Grid', internetAccess: true, landSize: 8.0, landOwnership: 'Church' },
+         yearEstablished: 1955,
+         createdAt: Date.now(),
+         updatedAt: Date.now()
+       },
+       {
+         name: 'Likuni Girls Secondary',
+         emisCode: 'MW-CE-707',
+         registrationNumber: 'REG/SEC/RC/1962',
+         level: 'Secondary',
+         status: 'active',
+         region: 'Central',
+         district: 'Lilongwe',
+         traditionalAuthority: 'Malili',
+         village: 'Likuni',
+         latitude: -13.9800,
+         longitude: 33.7000,
+         accessibility: 'Tarred Road',
+         distanceFromTown: 8,
+         ownership: 'Faith-Based',
+         headTeacher: { name: 'Mrs. J. Nkhoma', gender: 'F', qualification: 'B.Ed', appointmentDate: '2018-09-01', contact: '+265 999 444 333' },
+         infrastructure: { classrooms: 18, offices: 3, staffHouses: 10, latrines: 15, libraries: 1, laboratories: 3, waterSource: 'Piped Water', electricitySource: 'Grid', internetAccess: true, landSize: 12.0, landOwnership: 'Church' },
+         yearEstablished: 1962,
+         createdAt: Date.now(),
+         updatedAt: Date.now()
+       }
+    ];
+
+    const schoolIds = [];
+    for (const schoolData of schoolsToSeed) {
+      const id = await db.schools.add(schoolData as School);
+      schoolIds.push(id);
+    }
+
+    const school1Id = schoolIds[0];
+    const school2Id = schoolIds[1];
+
+    // Seed promotion records
+    await db.promotionRecords.bulkAdd([
+      { schoolId: school1Id, grade: 'Standard 1', gender: 'M', promoted: 45, repeated: 5, droppedOut: 2, year: 2023 },
+      { schoolId: school1Id, grade: 'Standard 1', gender: 'F', promoted: 48, repeated: 3, droppedOut: 1, year: 2023 },
+    ]);
+
+    // Seed exam results
+    await db.standardExams.bulkAdd([
+      { schoolId: school1Id, studentName: 'Chisomo Kamanga', gender: 'M', grade: 'Standard 8', chi: 88, eng: 75, arts: 60, mat: 92, psci: 85, ses: 70, total: 470, term: 1, year: 2023 },
+      { schoolId: school1Id, studentName: 'Mphatso Zulu', gender: 'F', grade: 'Standard 8', chi: 92, eng: 88, arts: 70, mat: 85, psci: 90, ses: 75, total: 500, term: 1, year: 2023 },
+    ]);
+
+    // Seed finance
+    await db.financeSIG.bulkAdd([
+      { schoolId: school1Id, purpose: 'Classroom Rehabilitation', amount: 1200000, status: 'Spent', date: Date.now() - 30 * 24 * 60 * 60 * 1000 },
+      { schoolId: school1Id, purpose: 'Textbook Procurement', amount: 500000, status: 'Planned', date: Date.now() + 15 * 24 * 60 * 60 * 1000 },
+    ]);
+
+    // Seed learners linked to schools
+    await db.learners.bulkAdd([
+      {
+        schoolId: school1Id,
+        lin: 'LDS-2023-001',
+        nin: 'MW-LRN-101',
+        firstName: 'Jane',
+        surname: 'Chirwa',
+        gender: 'F',
+        dateOfBirth: '2015-03-20',
+        class: 'Standard 3',
+        nationality: 'Malawian',
+        isSNE: false,
+        status: 'active',
+        createdAt: Date.now()
+      },
+      {
+        schoolId: school2Id,
+        lin: 'BSS-2023-001',
+        nin: 'MW-LRN-201',
+        firstName: 'Aliko',
+        surname: 'Dangote',
+        gender: 'M',
+        dateOfBirth: '2010-05-12',
+        class: 'Form 1',
+        nationality: 'Malawian',
+        isSNE: false,
+        status: 'active',
+        createdAt: Date.now()
+      }
+    ]);
+
+    // Seed teachers linked to schools
+    await db.teachers.bulkAdd([
+      {
+        schoolId: school1Id,
+        emisCode: 'MW-CE-001',
+        tpNumber: 'TP/2010/8842',
+        registrationNumber: 'REG/T/2010/001',
+        nin: 'MW-STF-001',
+        fullName: 'John Kayira',
+        gender: 'M',
+        dateOfBirth: '1985-05-12',
+        phoneNumber: '+265 999 123 456',
+        homeAddress: 'P.O. Box 45, Lilongwe',
+        teachingGrade: 'Grade D',
+        highestQualification: 'Degree in Education',
+        specialization: 'Mathematics, Science',
+        dateOfFirstAppointment: '2010-09-01',
+        dateOfAppointmentToCurrentGrade: '2018-01-15',
+        status: 'Active',
+        responsibility: 'Head Teacher',
+        assignedStandard: 'Standard 8',
+        tcmRegistrationNumber: 'TCM-PR-2010-001',
+        tcmLicenseNumber: 'L-2023-001',
+        tcmLicenseExpiryDate: '2026-12-31',
+        createdAt: Date.now(),
+        updatedAt: Date.now()
+      },
+      {
+        schoolId: school1Id,
+        emisCode: 'MW-CE-001',
+        tpNumber: 'TP/2015/1234',
+        registrationNumber: 'REG/T/2015/055',
+        nin: 'MW-STF-002',
+        fullName: 'Mary Mwale',
+        gender: 'F',
+        dateOfBirth: '1992-03-20',
+        phoneNumber: '+265 888 765 432',
+        homeAddress: 'Area 25, Lilongwe',
+        teachingGrade: 'Grade F',
+        highestQualification: 'Diploma in Education',
+        specialization: 'Chichewa, English',
+        dateOfFirstAppointment: '2015-09-01',
+        dateOfAppointmentToCurrentGrade: '2015-09-01',
+        status: 'Active',
+        assignedStandard: 'P-Klass',
+        createdAt: Date.now(),
+        updatedAt: Date.now()
+      }
+    ]);
+  }
+};

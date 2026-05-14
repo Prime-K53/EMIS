@@ -1,0 +1,10 @@
+{
+  "name": "Malawi EMIS: TDC",
+  "description": "Centralized School Registry Module for the Malawi Ministry of Education, supporting all educational levels and geographical mapping.",
+  "requestFramePermissions": [
+    "camera",
+    "microphone",
+    "geolocation"
+  ],
+  "majorCapabilities": []
+}

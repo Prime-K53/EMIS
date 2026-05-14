@@ -1,0 +1,108 @@
+@import "@fontsource/inter/400.css";
+@import "@fontsource/inter/500.css";
+@import "@fontsource/inter/600.css";
+@import "@fontsource/inter/700.css";
+@import "tailwindcss";
+
+@theme {
+  --color-primary-default: #0f172a;
+  --color-brand-primary: #1b2e4b;
+  --color-brand-accent: #3b82f6;
+  --color-bg-default: #fcfdfe;
+  --color-surface-default: #FFFFFF;
+  --color-border-default: #e5e7eb;
+  --color-text-primary: #111827;
+  --color-text-secondary: #4b5563;
+  --color-success: #059669;
+  --color-warning: #d97706;
+  --color-error: #dc2626;
+
+  --font-sans: 'Inter', system-ui, -apple-system, sans-serif;
+}
+
+/* Base Styles */
+@layer base {
+  body {
+    @apply bg-bg-default text-text-primary text-[13px] leading-normal antialiased;
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  h1 { @apply text-[22px] font-bold text-text-primary tracking-tight leading-tight; }
+  h2 { @apply text-[16px] font-bold text-text-primary tracking-tight leading-snug; }
+  h3 { @apply text-[14px] font-bold text-text-primary leading-snug; }
+  
+  label { @apply text-[12px] font-semibold text-text-secondary; }
+}
+
+@layer components {
+  .erp-container {
+    @apply max-w-[1500px] mx-auto w-full px-5 py-5;
+  }
+
+  .erp-card {
+    @apply bg-white border border-border-default rounded shadow-[0_1px_2px_rgba(0,0,0,0.05)];
+  }
+
+  .erp-input {
+    @apply h-8 px-2.5 bg-white border border-gray-300 rounded text-[13px] transition-all
+           focus:outline-none focus:border-primary-default focus:ring-1 focus:ring-primary-default/5;
+  }
+
+  .erp-btn {
+    @apply h-8 px-3.5 inline-flex items-center justify-center rounded text-[12px] font-bold transition-all cursor-pointer gap-1.5;
+  }
+
+  .erp-btn-primary {
+    @apply h-8 px-3.5 inline-flex items-center justify-center rounded text-[12px] font-bold transition-all cursor-pointer gap-1.5
+           bg-primary-default text-white border border-primary-default hover:bg-slate-800 active:scale-[0.98] shadow-sm;
+  }
+
+  .erp-btn-secondary {
+    @apply h-8 px-3.5 inline-flex items-center justify-center rounded text-[12px] font-bold transition-all cursor-pointer gap-1.5
+           bg-white text-text-primary border border-border-default hover:bg-gray-50 active:scale-[0.98] shadow-sm;
+  }
+
+  .erp-table-header {
+    @apply bg-gray-50/80 text-[11px] font-bold text-text-secondary px-4 py-2 text-left border-b border-border-default uppercase tracking-wider;
+  }
+
+  .erp-table-cell {
+    @apply px-4 py-2 text-[13px] border-b border-gray-100;
+  }
+
+  .erp-table-row {
+    @apply hover:bg-slate-50 transition-colors cursor-pointer;
+  }
+
+  .erp-badge {
+    @apply px-2 py-0.5 rounded text-[10px] font-bold tracking-tight inline-flex items-center border;
+  }
+
+  .erp-header-title {
+    @apply text-[22px] font-bold text-text-primary tracking-tight leading-tight;
+  }
+
+  .erp-section-title {
+    @apply text-[11px] font-bold text-text-secondary uppercase tracking-wider;
+  }
+
+  .erp-label-metadata {
+    @apply text-[11px] font-medium text-text-secondary;
+  }
+}
+
+/* Custom Scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  @apply bg-gray-300 rounded-full hover:bg-gray-400;
+}
