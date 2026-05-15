@@ -1,5 +1,6 @@
 
 import React from 'react';
+import { toast } from 'sonner';
 import { Building2, BookOpen, BadgeDollarSign, MapPin, AlertCircle, Search, Download } from 'lucide-react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db } from '../db';
@@ -23,6 +24,24 @@ const RecordsRegistry: React.FC<RecordsRegistryProps> = ({ type }) => {
 
   const { title, icon, subtitle } = getInfo();
 
+  const handleExport = () => {
+    if (!schools.length) {
+      toast.error('No records to export');
+      return;
+    }
+    const headers = ['School Name', 'EMIS Code', 'Level', 'District', 'Region', 'Status'];
+    const rows = schools.map(s => [s.name, s.emisCode, s.level, s.district, s.region, s.status]);
+    const csv = [headers.join(','), ...rows.map(r => r.map(v => `"${v.replace(/"/g, '""')}"`).join(','))].join('\n');
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${type}_registry_${new Date().toISOString().split('T')[0]}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+    toast.success(`Exported ${schools.length} records`);
+  };
+
   return (
     <div className="erp-container py-6 space-y-6 animate-in-fade">
       <header className="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-4 border-b border-border-default">
@@ -36,7 +55,7 @@ const RecordsRegistry: React.FC<RecordsRegistryProps> = ({ type }) => {
           </div>
         </div>
         <div className="flex items-center gap-3">
-          <button className="erp-btn erp-btn-secondary h-9 px-4 text-[13px] font-medium">
+          <button onClick={handleExport} className="erp-btn erp-btn-secondary h-9 px-4 text-[13px] font-medium">
             <Download size={14} />
             <span>Export Database</span>
           </button>
@@ -97,7 +116,7 @@ const RecordsRegistry: React.FC<RecordsRegistryProps> = ({ type }) => {
             {schools.map((school) => {
               const report = reports.find(r => r.schoolId === school.id);
               // Use school.id to generate "stable" random-looking values
-              const seed = school.id.split('').reduce((acc, char) => acc + char.charCodeAt(0), 0);
+              const seed = String(school.id).split('').reduce((acc, char) => acc + char.charCodeAt(0), 0);
               const stableRandom = (offset: number) => ((seed + offset) % 100) / 100;
               
               return (

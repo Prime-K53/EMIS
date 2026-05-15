@@ -1,6 +1,7 @@
 
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { toast } from 'sonner';
+import { useLiveQuery } from 'dexie-react-hooks';
 import { 
   Users, 
   Building2, 
@@ -43,6 +44,7 @@ import {
   Area,
   Legend
 } from 'recharts';
+import { db } from '../db';
 import KPICard from './KPICard';
 
 interface ZonalModuleProps {
@@ -71,25 +73,55 @@ const ZonalModule: React.FC<ZonalModuleProps> = ({ type }) => {
   const { title, icon } = getHeaderInfo();
   const [isSyncing, setIsSyncing] = useState(false);
 
+  const allSchools = useLiveQuery(() => db.schools.toArray()) || [];
+  const allLearners = useLiveQuery(() => db.learners.toArray()) || [];
+  const allTeachers = useLiveQuery(() => db.teachers.toArray()) || [];
+  const allReports = useLiveQuery(() => db.termlyReports.toArray()) || [];
+  const allAssets = useLiveQuery(() => db.assets.toArray()) || [];
+  const allFinance = useLiveQuery(() => db.financeSIG.toArray()) || [];
+
+  const zoneStats = useMemo(() => ({
+    totalSchools: allSchools.length,
+    totalLearners: allLearners.length,
+    totalTeachers: allTeachers.length,
+    totalReports: allReports.length,
+    submittedReports: allReports.filter(r => r.status === 'Submitted').length,
+    boysEnrolled: allLearners.filter(l => l.gender === 'M').length,
+    girlsEnrolled: allLearners.filter(l => l.gender === 'F').length,
+  }), [allSchools, allLearners, allTeachers, allReports]);
+
   const handleSync = async () => {
     setIsSyncing(true);
     toast.info('Initiating zonal data synchronization...');
-    // Simulate API delay
     await new Promise(resolve => setTimeout(resolve, 2000));
+    await db.auditLogs.add({ schoolId: 1, action: 'update', content: `Zonal data sync completed for ${title}`, performedBy: 'Administrator', timestamp: Date.now() });
     setIsSyncing(false);
     toast.success('Zonal aggregate data refreshed successfully');
   };
 
   const handleExport = (format: string, reportName?: string) => {
     const name = reportName || title;
-    toast.promise(
-      new Promise(resolve => setTimeout(resolve, 1500)),
-      {
-        loading: `Generating ${format} for ${name}...`,
-        success: `${name} exported as ${format}`,
-        error: 'Export failed'
-      }
-    );
+    const rows: string[][] = [];
+    if (type === 'enrolment') {
+      rows.push(['Metric', 'Value']);
+      rows.push(['Total Learners', String(allLearners.length)]);
+      rows.push(['Boys', String(zoneStats.boysEnrolled)]);
+      rows.push(['Girls', String(zoneStats.girlsEnrolled)]);
+      rows.push(['Schools', String(zoneStats.totalSchools)]);
+      rows.push(['Teachers', String(zoneStats.totalTeachers)]);
+    } else {
+      rows.push(['School', 'EMIS Code', 'Level', 'District', 'Status']);
+      allSchools.forEach(s => rows.push([s.name, s.emisCode, s.level, s.district, s.status]));
+    }
+    const csv = [rows[0].join(','), ...rows.slice(1).map(r => r.map(v => `"${v.replace(/"/g, '""')}"`).join(','))].join('\n');
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${type}_${new Date().toISOString().split('T')[0]}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+    toast.success(`Exported ${name}`);
   };
 
   const handleGenericAction = (action: string) => {
@@ -100,11 +132,11 @@ const ZonalModule: React.FC<ZonalModuleProps> = ({ type }) => {
     <div className="space-y-8">
       {/* Summary Cards */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
-        <KPICard label="Total Zonal Enrolment" value={14250} icon={<Users />} trend="+4.2% YoY" />
-        <KPICard label="Boys / Girls" value="7,200 / 7,050" icon={<Users />} trend="GPI: 0.98" />
-        <KPICard label="Overage (Global)" value="12.5%" icon={<AlertCircle className="text-warning" />} trend="Std 8 Critical" />
-        <KPICard label="Underage (Global)" value="4.2%" icon={<AlertCircle className="text-blue-500" />} trend="Valid Entry" />
-        <KPICard label="Net Enrolment Rate" value="94.8%" icon={<CheckCircle2 className="text-success" />} trend="Target: 95%" />
+        <KPICard label="Total Zonal Enrolment" value={allLearners.length} icon={<Users />} trend="From learner registry" />
+        <KPICard label="Boys / Girls" value={`${zoneStats.boysEnrolled.toLocaleString()} / ${zoneStats.girlsEnrolled.toLocaleString()}`} icon={<Users />} trend={`GPI: ${zoneStats.girlsEnrolled > 0 ? (zoneStats.boysEnrolled / zoneStats.girlsEnrolled).toFixed(2) : 'N/A'}`} />
+        <KPICard label="Total Schools" value={zoneStats.totalSchools} icon={<Building2 />} trend="Active institutions" />
+        <KPICard label="Termly Reports" value={`${zoneStats.submittedReports}/${zoneStats.totalReports}`} icon={<FileBarChart />} trend="Submitted / Total" />
+        <KPICard label="Teachers" value={zoneStats.totalTeachers} icon={<UserRoundCheck className="text-success" />} trend="Registry count" />
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">

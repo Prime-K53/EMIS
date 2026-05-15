@@ -71,7 +71,8 @@ import {
 } from 'recharts';
 import { db } from '../db';
 import { 
-  School as SchoolType
+  School as SchoolType,
+  Learner
 } from '../types';
 import { 
   MALAWI_REGIONS, 
@@ -81,8 +82,6 @@ import {
   ACCESSIBILITY_TYPES 
 } from '../constants';
 import KPICard from './KPICard';
-import { GoogleGenAI } from '@google/genai';
-
 const COLORS = ['#1b2e4b', '#00a1a1', '#e91e63', '#f59e0b', '#10b981'];
 
 const SchoolProfile: React.FC = () => {
@@ -384,6 +383,7 @@ const SchoolDetailView = ({ school, onBack }: { school: SchoolType, onBack: () =
     const standardExams = useLiveQuery(() => db.standardExams.where('schoolId').equals(school.id!).toArray()) || [];
     const assets = useLiveQuery(() => db.assets.where('schoolId').equals(school.id!).toArray()) || [];
     const financeSIG = useLiveQuery(() => db.financeSIG.where('schoolId').equals(school.id!).toArray()) || [];
+    const inspections = useLiveQuery(() => db.inspections.where('schoolId').equals(school.id!).toArray()) || [];
 
     const tabs = [
         { id: 'dashboard', icon: <LayoutDashboard />, label: 'Overview', domain: 'Overview' },
@@ -409,8 +409,8 @@ const SchoolDetailView = ({ school, onBack }: { school: SchoolType, onBack: () =
         setIsGeneratingAI(true);
         toast.info('Initializing Neural Performance Engine...');
         try {
-            const genAI = new GoogleGenAI(process.env.GEMINI_API_KEY!);
-            const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+            const { GoogleGenAI } = await import('@google/genai');
+            const genAI = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || '' });
             
             const prompt = `Generate a strategic EMIS performance summary for ${school.name} (${school.emisCode}). 
             Data provided:
@@ -422,8 +422,11 @@ const SchoolDetailView = ({ school, onBack }: { school: SchoolType, onBack: () =
             
             Focus on strengths (e.g. S/T ratio, infrastructure) and weaknesses. Keep it professional and actionable.`;
 
-            const result = await model.generateContent(prompt);
-            const text = result.response.text();
+            const result = await genAI.models.generateContent({
+                model: 'gemini-2.0-flash-lite',
+                contents: prompt
+            });
+            const text = result.text;
             setAiSummary(text);
             
             await db.schools.update(school.id!, { 
@@ -687,44 +690,7 @@ const SchoolDetailView = ({ school, onBack }: { school: SchoolType, onBack: () =
                             )}
 
                             {activeTab === 'enrollment' && (
-                                <div className="space-y-6">
-                                    <div className="flex justify-between items-center">
-                                        <div>
-                                            <h3 className="text-[16px] font-bold text-text-primary">Learner Enrollment Table</h3>
-                                            <p className="text-[12px] text-text-secondary">Gender disaggregated data entry grid</p>
-                                        </div>
-                                        <button onClick={() => handleAction('Add Enrollment Record')} className="erp-btn erp-btn-secondary h-8 px-3 text-[12px]">
-                                            <Plus size={14} /> 
-                                            <span>Add Record</span>
-                                        </button>
-                                    </div>
-                                    <div className="erp-card overflow-hidden">
-                                        <table className="w-full text-left border-collapse">
-                                            <thead>
-                                                <tr className="bg-gray-50 border-b border-border-default">
-                                                    <th className="erp-table-header px-6 py-2.5">Class Level</th>
-                                                    <th className="erp-table-header px-6 py-2.5">Boys</th>
-                                                    <th className="erp-table-header px-6 py-2.5">Girls</th>
-                                                    <th className="erp-table-header px-6 py-2.5">Total</th>
-                                                    <th className="erp-table-header px-6 py-2.5">Underage</th>
-                                                    <th className="erp-table-header px-6 py-2.5">Overage</th>
-                                                </tr>
-                                            </thead>
-                                            <tbody className="divide-y divide-gray-100">
-                                                {['P-Klass', 'Standard 1', 'Standard 2', 'Standard 3', 'Standard 4', 'Standard 5', 'Standard 6', 'Standard 7', 'Standard 8'].map(grade => (
-                                                    <tr key={grade} className="erp-table-row">
-                                                        <td className="erp-table-cell px-6 py-2 text-[13px] font-bold text-text-primary">{grade}</td>
-                                                        <td className="erp-table-cell px-6 py-2"><input type="number" className="erp-input w-20 h-8 text-[12px]" defaultValue={25} /></td>
-                                                        <td className="erp-table-cell px-6 py-2"><input type="number" className="erp-input w-20 h-8 text-[12px]" defaultValue={28} /></td>
-                                                        <td className="erp-table-cell px-6 py-2 text-[13px] font-bold text-primary-default">53</td>
-                                                        <td className="erp-table-cell px-6 py-2 text-[12px] text-text-secondary">4</td>
-                                                        <td className="erp-table-cell px-6 py-2 text-[12px] text-text-secondary">2</td>
-                                                    </tr>
-                                                ))}
-                                            </tbody>
-                                        </table>
-                                    </div>
-                                </div>
+                                <EnrollmentGrid learners={schoolLearners} schoolId={school.id!} />
                             )}
 
                             {activeTab === 'registry' && (
@@ -1265,11 +1231,11 @@ const SchoolDetailView = ({ school, onBack }: { school: SchoolType, onBack: () =
                                                         <td className="erp-table-cell px-6 py-3 text-center font-bold text-[13px] text-text-primary">{a.quantity}</td>
                                                         <td className="erp-table-cell px-6 py-3 text-center">
                                                             <span className={`erp-badge py-0.5 px-2 text-[10px] ${
-                                                                a.status === 'Good' ? 'bg-success/10 text-success border-success/20' : 
-                                                                a.status === 'Repairable' ? 'bg-warning/10 text-warning border-warning/20' : 
+                                                                a.condition === 'Good' ? 'bg-success/10 text-success border-success/20' : 
+                                                                a.condition === 'Repairable' ? 'bg-warning/10 text-warning border-warning/20' : 
                                                                 'bg-error/10 text-error border-error/20'
                                                             }`}>
-                                                                {a.status}
+                                                                {a.condition}
                                                             </span>
                                                         </td>
                                                         <td className="erp-table-cell px-6 py-3 text-right text-[11px] text-text-secondary font-medium">{new Date(a.lastAuditDate).toLocaleDateString()}</td>
@@ -1292,26 +1258,28 @@ const SchoolDetailView = ({ school, onBack }: { school: SchoolType, onBack: () =
                                         <div className="border-b border-border-default pb-3">
                                             <h3 className="text-[16px] font-bold text-text-primary tracking-tight flex items-center gap-2">
                                                 <History size={18} className="text-text-secondary" />
-                                                Inspection History
+                                                Inspection History ({inspections.length} records)
                                             </h3>
                                         </div>
                                         <div className="space-y-4">
-                                            {[
-                                                { date: '2023-11-15', inspector: 'M. Phiri', score: 85, status: 'Exceptional' },
-                                                { date: '2023-05-10', inspector: 'G. Banda', score: 62, status: 'Satisfactory' },
-                                                { date: '2022-10-22', inspector: 'S. Nkhoma', score: 45, status: 'Needs Improvement' },
-                                            ].map((insp, i) => (
+                                            {(inspections.length > 0 ? inspections : []).map((insp, i) => {
+                                                const status = insp.score >= 80 ? 'Exceptional' : insp.score >= 60 ? 'Satisfactory' : 'Needs Improvement';
+                                                return (
                                                 <div key={i} className="flex items-center justify-between p-6 bg-white rounded-md border border-border-default hover:border-primary-default transition-all group shadow-sm">
                                                     <div className="flex items-center gap-4">
                                                         <div className={`w-3 h-3 rounded-full border-2 border-white shadow-sm ${insp.score >= 80 ? 'bg-success' : insp.score >= 60 ? 'bg-warning' : 'bg-error'}`} />
                                                         <div>
-                                                            <p className="text-[13px] font-bold text-text-primary leading-tight uppercase">{insp.status} • {insp.score}% Score</p>
-                                                            <p className="text-[11px] text-text-secondary font-medium mt-0.5">Audit by {insp.inspector} on {insp.date}</p>
+                                                            <p className="text-[13px] font-bold text-text-primary leading-tight uppercase">{status} • {insp.score}% Score</p>
+                                                            <p className="text-[11px] text-text-secondary font-medium mt-0.5">Audit by {insp.inspectorName} on {new Date(insp.date).toLocaleDateString()}</p>
                                                         </div>
                                                     </div>
                                                     <button className="w-8 h-8 flex items-center justify-center rounded-md bg-gray-50 text-text-secondary hover:bg-primary-default hover:text-white transition-all"><ChevronRight size={16} /></button>
                                                 </div>
-                                            ))}
+                                                );
+                                            })}
+                                            {inspections.length === 0 && (
+                                                <div className="text-center py-10 text-text-secondary text-[13px]">No inspection records found for this institution.</div>
+                                            )}
                                         </div>
                                     </div>
 
@@ -1328,12 +1296,15 @@ const SchoolDetailView = ({ school, onBack }: { school: SchoolType, onBack: () =
                                                 </div>
                                             </div>
                                             <div className="space-y-6">
-                                                {[
-                                                    { label: 'Leadership & Management', icon: <Briefcase /> },
-                                                    { label: 'Teaching & Learning Quality', icon: <GraduationCap /> },
-                                                    { label: 'Community Participation', icon: <Users2 /> },
-                                                ].map((field, i) => (
-                                                    <div key={i} className="space-y-3">
+                                                {([
+                                                    { label: 'Leadership & Management', key: 'leadership' as const, icon: <Briefcase /> },
+                                                    { label: 'Teaching & Learning Quality', key: 'teaching' as const, icon: <GraduationCap /> },
+                                                    { label: 'Community Participation', key: 'community' as const, icon: <Users2 /> },
+                                                ] as const).map((field) => {
+                                                    const latestInsp = inspections.length > 0 ? inspections.reduce((a, b) => a.date > b.date ? a : b) : null;
+                                                    const score = latestInsp?.sections?.[field.key] || 3;
+                                                    return (
+                                                    <div key={field.key} className="space-y-3">
                                                         <div className="flex items-center justify-between">
                                                             <div className="flex items-center gap-3 text-white/80">
                                                                 <div className="w-8 h-8 bg-white/10 rounded-md flex items-center justify-center">
@@ -1341,13 +1312,14 @@ const SchoolDetailView = ({ school, onBack }: { school: SchoolType, onBack: () =
                                                                 </div>
                                                                 <span className="text-[12px] font-bold uppercase tracking-wide">{field.label}</span>
                                                             </div>
-                                                            <span className="text-[13px] font-bold text-primary-default">4 / 5</span>
+                                                            <span className="text-[13px] font-bold text-primary-default">{score} / 5</span>
                                                         </div>
                                                         <div className="relative h-1.5 bg-white/10 rounded-full overflow-hidden">
-                                                          <div className="absolute top-0 left-0 h-full bg-primary-default rounded-full" style={{ width: '80%' }}></div>
+                                                          <div className="absolute top-0 left-0 h-full bg-primary-default rounded-full" style={{ width: `${(score / 5) * 100}%` }}></div>
                                                         </div>
                                                     </div>
-                                                ))}
+                                                    );
+                                                })}
                                                 <div className="pt-4">
                                                    <button onClick={() => handleAction('Submit Quality Analysis')} className="w-full erp-btn erp-btn-primary h-12 text-[14px] font-bold shadow-lg">Submit Final Analysis</button>
                                                 </div>
@@ -1435,43 +1407,43 @@ const SchoolForm = ({ school, onCancel, onSuccess }: { school?: SchoolType, onCa
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
         setIsSaving(true);
-        toast.promise(
-            (async () => {
-                const finalData = {
-                    ...formData,
-                    updatedAt: Date.now()
-                } as SchoolType;
+        const saveOp = (async () => {
+            const finalData = {
+                ...formData,
+                updatedAt: Date.now()
+            } as SchoolType;
 
-                let schoolId: number;
-                if (school?.id) {
-                    await db.schools.update(school.id, finalData);
-                    schoolId = school.id;
-                    await db.auditLogs.add({
-                        schoolId,
-                        action: 'update',
-                        content: `Modified school record: ${formData.name}`,
-                        performedBy: 'System Admin',
-                        timestamp: Date.now()
-                    });
-                } else {
-                    finalData.createdAt = Date.now();
-                    schoolId = await db.schools.add(finalData);
-                    await db.auditLogs.add({
-                        schoolId,
-                        action: 'create',
-                        content: `Registered new school: ${formData.name}`,
-                        performedBy: 'System Admin',
-                        timestamp: Date.now()
-                    });
-                }
-                onSuccess();
-            })(),
-            {
-                loading: 'Persisting institutional data...',
-                success: 'Institutional record saved to registry',
-                error: 'Registration protocol failed.'
+            let schoolId: number;
+            if (school?.id) {
+                await db.schools.update(school.id, finalData);
+                schoolId = school.id;
+                await db.auditLogs.add({
+                    schoolId,
+                    action: 'update',
+                    content: `Modified school record: ${formData.name}`,
+                    performedBy: 'System Admin',
+                    timestamp: Date.now()
+                });
+            } else {
+                finalData.createdAt = Date.now();
+                schoolId = await db.schools.add(finalData);
+                await db.auditLogs.add({
+                    schoolId,
+                    action: 'create',
+                    content: `Registered new school: ${formData.name}`,
+                    performedBy: 'System Admin',
+                    timestamp: Date.now()
+                });
             }
-        ).finally(() => setIsSaving(false));
+            onSuccess();
+        })();
+        toast.promise(saveOp, {
+            loading: 'Persisting institutional data...',
+            success: 'Institutional record saved to registry',
+            error: 'Registration protocol failed.'
+        });
+        await saveOp;
+        setIsSaving(false);
     };
 
     return (
@@ -1749,5 +1721,73 @@ const FormField = ({ label, children, required }: { label: string, children: Rea
         </div>
     </div>
 );
+
+const EnrollmentGrid = ({ learners, schoolId }: { learners: Learner[], schoolId: number }) => {
+    type EnrolRow = { boys: number; girls: number; underage: number; overage: number };
+    const [enrolData, setEnrolData] = React.useState<Record<string, EnrolRow>>(() => {
+        const grades = ['P-Klass', 'Standard 1', 'Standard 2', 'Standard 3', 'Standard 4', 'Standard 5', 'Standard 6', 'Standard 7', 'Standard 8'];
+        const initial: Record<string, { boys: number; girls: number; underage: number; overage: number }> = {};
+        grades.forEach(g => {
+            const gradeLearners = learners.filter(l => l.class === g);
+            initial[g] = { boys: gradeLearners.filter(l => l.gender === 'M').length, girls: gradeLearners.filter(l => l.gender === 'F').length, underage: 0, overage: 0 };
+        });
+        return initial;
+    });
+
+    const updateField = (grade: string, field: 'boys' | 'girls' | 'underage' | 'overage', value: number) => {
+        setEnrolData(prev => ({ ...prev, [grade]: { ...prev[grade], [field]: value } }));
+    };
+
+    const totalEnrolment = (Object.values(enrolData) as EnrolRow[]).reduce((sum, g) => sum + g.boys + g.girls, 0);
+
+    return (
+        <div className="space-y-6">
+            <div className="flex justify-between items-center">
+                <div>
+                    <h3 className="text-[16px] font-bold text-text-primary">Learner Enrollment Table</h3>
+                    <p className="text-[12px] text-text-secondary">Gender disaggregated data entry grid — {totalEnrolment} total learners</p>
+                </div>
+                                <button onClick={() => { toast.info('Enrollment synced from learner registry'); }} className="erp-btn erp-btn-secondary h-8 px-3 text-[12px]">
+                                    <Plus size={14} /> 
+                                    <span>Sync from Registry</span>
+                                </button>
+            </div>
+            <div className="erp-card overflow-hidden">
+                <table className="w-full text-left border-collapse">
+                    <thead>
+                        <tr className="bg-gray-50 border-b border-border-default">
+                            <th className="erp-table-header px-6 py-2.5">Class Level</th>
+                            <th className="erp-table-header px-6 py-2.5">Boys</th>
+                            <th className="erp-table-header px-6 py-2.5">Girls</th>
+                            <th className="erp-table-header px-6 py-2.5">Total</th>
+                            <th className="erp-table-header px-6 py-2.5">Underage</th>
+                            <th className="erp-table-header px-6 py-2.5">Overage</th>
+                        </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-100">
+                        {(Object.entries(enrolData) as [string, EnrolRow][]).map(([grade, data]) => (
+                            <tr key={grade} className="erp-table-row">
+                                <td className="erp-table-cell px-6 py-2 text-[13px] font-bold text-text-primary">{grade}</td>
+                                <td className="erp-table-cell px-6 py-2">
+                                    <input type="number" value={data.boys} onChange={e => updateField(grade, 'boys', Number(e.target.value))} className="erp-input w-20 h-8 text-[12px]" />
+                                </td>
+                                <td className="erp-table-cell px-6 py-2">
+                                    <input type="number" value={data.girls} onChange={e => updateField(grade, 'girls', Number(e.target.value))} className="erp-input w-20 h-8 text-[12px]" />
+                                </td>
+                                <td className="erp-table-cell px-6 py-2 text-[13px] font-bold text-primary-default">{data.boys + data.girls}</td>
+                                <td className="erp-table-cell px-6 py-2">
+                                    <input type="number" value={data.underage} onChange={e => updateField(grade, 'underage', Number(e.target.value))} className="erp-input w-20 h-8 text-[12px]" />
+                                </td>
+                                <td className="erp-table-cell px-6 py-2">
+                                    <input type="number" value={data.overage} onChange={e => updateField(grade, 'overage', Number(e.target.value))} className="erp-input w-20 h-8 text-[12px]" />
+                                </td>
+                            </tr>
+                        ))}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    );
+};
 
 export default SchoolProfile;

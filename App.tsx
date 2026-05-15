@@ -1,5 +1,5 @@
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, lazy, Suspense } from 'react';
 import { HashRouter, Routes, Route, Link, useLocation } from 'react-router-dom';
 import { Toaster } from 'sonner';
 import { 
@@ -22,18 +22,23 @@ import {
   FileText,
   LogOut,
   ChevronRight,
-  Sparkles
+  Sparkles,
+  FileSpreadsheet,
+  Newspaper,
+  SlidersHorizontal
 } from 'lucide-react';
-import { seedDatabase } from './db';
-import Dashboard from './components/Dashboard';
-import LearnerRegistry from './components/LearnerRegistry'; 
-import Assistant from './components/Assistant';
-import DataUpload from './components/DataUpload';
-import TeacherRegistry from './components/TeacherRegistry';
+import { useLiveQuery } from 'dexie-react-hooks';
+import { seedDatabase, db } from './db';
+import ErrorBoundary from './components/ErrorBoundary';
 import LandingPage from './components/LandingPage';
-import SchoolProfile from './components/SchoolProfile';
-import ZonalModule from './components/ZonalModule';
-import RecordsRegistry from './components/RecordsRegistry';
+const Dashboard = lazy(() => import('./components/Dashboard'));
+const LearnerRegistry = lazy(() => import('./components/LearnerRegistry')); 
+const Assistant = lazy(() => import('./components/Assistant'));
+const DataUpload = lazy(() => import('./components/DataUpload'));
+const TeacherRegistry = lazy(() => import('./components/TeacherRegistry'));
+const SchoolProfile = lazy(() => import('./components/SchoolProfile'));
+const ZonalModule = lazy(() => import('./components/ZonalModule'));
+const RecordsRegistry = lazy(() => import('./components/RecordsRegistry'));
 
 const SidebarItem: React.FC<{ to: string, icon: React.ReactNode, label: string, active: boolean, collapsed: boolean }> = ({ to, icon, label, active, collapsed }) => (
   <Link 
@@ -62,9 +67,27 @@ const App: React.FC = () => {
   const [showApp, setShowApp] = useState(false);
   const location = useLocation();
 
+  const schools = useLiveQuery(() => db.schools.toArray()) || [];
+  const activeSchool = schools[0];
+
   useEffect(() => {
     seedDatabase();
   }, []);
+
+  const pageTitles: Record<string, string> = {
+    '/': 'Dashboard', '/upload': 'Data Upload', '/learners': 'Learner Registry', '/hr': 'Teacher Registry',
+    '/school-profile': 'School Profile', '/assistant': 'AI Assistant', '/infrastructure': 'Infrastructure',
+    '/materials': 'Materials', '/finance': 'Finance', '/settings': 'Settings',
+    '/publications': 'Publications', '/notices': 'Notices',
+    '/zonal/enrolment': 'Zonal Enrolment', '/zonal/infrastructure': 'Zonal Infrastructure',
+    '/zonal/exams': 'Zonal Exams', '/zonal/attendance': 'Zonal Attendance',
+    '/zonal/materials': 'Zonal Textbooks', '/zonal/health': 'Zonal Health',
+    '/zonal/inclusion': 'Zonal Inclusion', '/zonal/finance': 'Zonal Finance',
+    '/zonal/reports': 'Zonal Reports',
+  };
+  useEffect(() => {
+    document.title = `EMIS TDC — ${pageTitles[location.pathname] || 'Module'}`;
+  }, [location.pathname]);
 
   if (!showApp) {
     return <LandingPage onEnter={() => setShowApp(true)} />;
@@ -114,6 +137,27 @@ const App: React.FC = () => {
           </button>
         </div>
 
+        {!collapsed && schools.length > 0 && (
+          <div className="px-3 pt-3 pb-1">
+            <div className="relative">
+              <select
+                value={activeSchool?.id || ''}
+                onChange={(e) => {
+                  const val = e.target.value;
+                  if (val) window.location.hash = '/school-profile';
+                }}
+                className="w-full h-8 px-2 bg-slate-800 border border-slate-700 rounded text-[11px] text-slate-200 font-medium outline-none focus:border-blue-500 cursor-pointer appearance-none"
+              >
+                {schools.map(s => (
+                  <option key={s.id} value={s.id}>{s.name.length > 28 ? s.name.substring(0, 26) + '...' : s.name}</option>
+                ))}
+              </select>
+              <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center pr-2">
+                <ChevronRight size={12} className="text-slate-500 rotate-90" />
+              </div>
+            </div>
+          </div>
+        )}
         <nav className="flex-1 overflow-y-auto custom-scrollbar px-3 py-4 space-y-1">
           {['Main', 'Records', 'Zonal Aggregates', 'Utilities'].map(section => (
             <React.Fragment key={section}>
@@ -141,14 +185,13 @@ const App: React.FC = () => {
         </div>
       </aside>
 
-      {/* Main Content */}
+        {/* Main Content */}
       <div className="flex-1 flex flex-col min-w-0 overflow-hidden bg-bg-default">
-        {/* Header - Only on Dashboard */}
-        {isDashboard && (
-          <header className="h-[48px] bg-white border-b border-border-default flex items-center justify-between px-5 shrink-0 z-40">
+        {/* Persistent Header */}
+        <header className="h-[48px] bg-white border-b border-border-default flex items-center justify-between px-5 shrink-0 z-40">
             <div className="flex items-center space-x-3">
-               <h1 className="text-[14px] font-bold text-text-primary leading-tight">Lilongwe Demonstration School</h1>
-               <span className="bg-primary-default/5 text-primary-default px-2 py-0.5 rounded text-[10px] font-bold border border-primary-default/20">MW-CE-001</span>
+               <h1 className="text-[14px] font-bold text-text-primary leading-tight">{activeSchool?.name || 'Select School'}</h1>
+               <span className="bg-primary-default/5 text-primary-default px-2 py-0.5 rounded text-[10px] font-bold border border-primary-default/20">{activeSchool?.emisCode || '----'}</span>
             </div>
 
             <div className="flex items-center space-x-5">
@@ -170,11 +213,12 @@ const App: React.FC = () => {
                </div>
             </div>
           </header>
-        )}
 
         {/* View Viewport */}
         <main className="flex-1 overflow-y-auto custom-scrollbar">
           <div className="erp-container">
+            <ErrorBoundary>
+            <Suspense fallback={<div className="flex items-center justify-center h-[60vh]"><div className="w-8 h-8 border-2 border-primary-default border-t-transparent rounded-full animate-spin"></div></div>}>
             <Routes>
               <Route path="/" element={<Dashboard />} />
               <Route path="/upload" element={<DataUpload />} />
@@ -199,9 +243,13 @@ const App: React.FC = () => {
               <Route path="/zonal/finance" element={<ZonalModule type="finance" />} />
               <Route path="/zonal/reports" element={<ZonalModule type="reports" />} />
               <Route path="/settings" element={<ZonalModule type="settings" />} />
+              <Route path="/publications" element={<PublicationsView />} />
+              <Route path="/notices" element={<NoticesView />} />
 
               <Route path="*" element={<PlaceholderView />} />
             </Routes>
+            </Suspense>
+            </ErrorBoundary>
           </div>
         </main>
       </div>
@@ -221,6 +269,38 @@ const PlaceholderView = () => (
           Check for updates
           <ChevronRight size={16} />
         </button>
+    </div>
+  </div>
+);
+
+const PublicationsView = () => (
+  <div className="flex flex-col items-center justify-center h-[60vh]">
+    <div className="erp-card p-12 flex flex-col items-center max-w-lg text-center">
+      <div className="w-16 h-16 bg-bg-default rounded-full flex items-center justify-center mb-6">
+        <FileSpreadsheet size={32} className="text-text-secondary/40" />
+      </div>
+      <h2 className="mb-2">Publications Registry</h2>
+      <p className="text-text-secondary mb-8">Official EMIS publications, circulars, and statistical bulletins.</p>
+      <button className="erp-btn erp-btn-primary px-8">
+        Browse Publications
+        <ChevronRight size={16} />
+      </button>
+    </div>
+  </div>
+);
+
+const NoticesView = () => (
+  <div className="flex flex-col items-center justify-center h-[60vh]">
+    <div className="erp-card p-12 flex flex-col items-center max-w-lg text-center">
+      <div className="w-16 h-16 bg-bg-default rounded-full flex items-center justify-center mb-6">
+        <Newspaper size={32} className="text-text-secondary/40" />
+      </div>
+      <h2 className="mb-2">Notices & Announcements</h2>
+      <p className="text-text-secondary mb-8">Ministry circulars, deadlines, and system notifications.</p>
+      <button className="erp-btn erp-btn-primary px-8">
+        View Notices
+        <ChevronRight size={16} />
+      </button>
     </div>
   </div>
 );

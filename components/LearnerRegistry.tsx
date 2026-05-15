@@ -1,7 +1,8 @@
 
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { toast } from 'sonner';
 import { useLiveQuery } from 'dexie-react-hooks';
+import { useDebounce } from '../services/useDebounce';
 import { 
   Plus, 
   Trash2, 
@@ -35,12 +36,13 @@ const StatusBadge: React.FC<{ status: string }> = ({ status }) => {
 const LearnerRegistry: React.FC = () => {
   const learners = useLiveQuery(() => db.learners.orderBy('id').reverse().toArray());
   const [searchQuery, setSearchQuery] = useState('');
+  const debouncedSearch = useDebounce(searchQuery, 300);
   const [filterClass, setFilterClass] = useState('All Standards');
 
   const filteredLearners = useMemo(() => {
     if (!learners) return [];
     return learners.filter((l) => {
-      const searchLower = searchQuery.toLowerCase();
+      const searchLower = debouncedSearch.toLowerCase();
       const matchesSearch = 
         l.firstName.toLowerCase().includes(searchLower) || 
         l.surname.toLowerCase().includes(searchLower) || 
@@ -54,6 +56,7 @@ const LearnerRegistry: React.FC = () => {
   }, [learners, searchQuery, filterClass]);
 
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [editingLearnerId, setEditingLearnerId] = useState<number | null>(null);
   const [regStep, setRegStep] = useState<1 | 2>(1);
   const [hasNin, setHasNin] = useState<boolean | null>(null);
   const [isVerifying, setIsVerifying] = useState(false);
@@ -77,6 +80,7 @@ const LearnerRegistry: React.FC = () => {
 
   const resetForm = () => {
     setIsModalOpen(false);
+    setEditingLearnerId(null);
     setRegStep(1);
     setHasNin(null);
     setIsVerified(false);
@@ -117,25 +121,57 @@ const LearnerRegistry: React.FC = () => {
       return;
     }
     
-    toast.promise(new Promise(resolve => setTimeout(resolve, 1500)), {
-      loading: 'Compiling registry data into secure Excel format...',
-      success: 'Learner registry exported successfully.',
-      error: 'Export protocol failed.'
-    });
+    const headers = ['LIN', 'NIN', 'Surname', 'First Name', 'Gender', 'Class', 'Date of Birth', 'Nationality', 'Status', 'SNE'];
+    const rows = filteredLearners.map(l => [
+      l.lin || '', l.nin || '', l.surname, l.firstName, l.gender, l.class,
+      l.dateOfBirth, l.nationality, l.status, l.isSNE ? 'Yes' : 'No'
+    ]);
     
-    // In a real app we would use XLSX or similar here
-    console.log('Exporting', filteredLearners);
+    const csv = [headers.join(','), ...rows.map(r => r.map(v => `"${v.replace(/"/g, '""')}"`).join(','))].join('\n');
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `learner_registry_${new Date().toISOString().split('T')[0]}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+    
+    toast.success(`Exported ${filteredLearners.length} learner records`);
   };
 
   const handleRegister = async (e: React.FormEvent) => {
     e.preventDefault();
-    const mockLin = `U${Math.floor(Math.random() * 99)}M${Math.floor(Math.random() * 9999)}A00${Math.floor(Math.random() * 1000)}`;
     
-    await db.learners.add({
-      ...newLearner,
-      lin: mockLin,
-      createdAt: Date.now()
-    } as Learner);
+    if (editingLearnerId) {
+      const { talents, ...safeUpdate } = newLearner;
+      await db.learners.update(editingLearnerId, {
+        ...safeUpdate,
+        talents: talents || []
+      });
+      await db.auditLogs.add({
+        schoolId: newLearner.schoolId || 1,
+        action: 'update',
+        content: `Updated learner: ${newLearner.firstName} ${newLearner.surname}`,
+        performedBy: 'Administrator',
+        timestamp: Date.now()
+      });
+      toast.success('Learner record updated');
+    } else {
+      const mockLin = `U${Math.floor(Math.random() * 99)}M${Math.floor(Math.random() * 9999)}A00${Math.floor(Math.random() * 1000)}`;
+      await db.learners.add({
+        ...newLearner,
+        lin: mockLin,
+        createdAt: Date.now()
+      } as Learner);
+      await db.auditLogs.add({
+        schoolId: newLearner.schoolId || 1,
+        action: 'create',
+        content: `Enrolled learner: ${newLearner.firstName} ${newLearner.surname}`,
+        performedBy: 'Administrator',
+        timestamp: Date.now()
+      });
+      toast.success('Learner enrollment complete');
+    }
     
     resetForm();
   };
@@ -143,11 +179,49 @@ const LearnerRegistry: React.FC = () => {
   const handleDelete = async (id?: number) => {
     if (id && window.confirm('Are you sure you want to delete this learner record?')) {
       try {
+        const learner = learners?.find(l => l.id === id);
         await db.learners.delete(id);
+        if (learner) {
+          await db.auditLogs.add({
+            schoolId: learner.schoolId || 1,
+            action: 'delete',
+            content: `Deleted learner: ${learner.firstName} ${learner.surname} (${learner.lin})`,
+            performedBy: 'Administrator',
+            timestamp: Date.now()
+          });
+        }
+        toast.success('Learner record deleted');
       } catch (error) {
         console.error("EMIS: Failed to delete learner record", error);
+        toast.error('Failed to delete learner record');
       }
     }
+  };
+
+  const handleEdit = (learner: Learner) => {
+    setNewLearner({
+      firstName: learner.firstName,
+      surname: learner.surname,
+      nin: learner.nin || '',
+      gender: learner.gender,
+      class: learner.class,
+      status: learner.status,
+      nationality: learner.nationality,
+      dateOfBirth: learner.dateOfBirth,
+      isSNE: learner.isSNE,
+      sneCategory: learner.sneCategory,
+      isRefugee: learner.isRefugee,
+      isOrphan: learner.isOrphan,
+      parentDetails: learner.parentDetails,
+      familiarLanguage: learner.familiarLanguage,
+      talents: learner.talents,
+      schoolId: learner.schoolId
+    });
+    setEditingLearnerId(learner.id!);
+    setHasNin(learner.nin ? true : null);
+    setIsVerified(!!learner.nin);
+    setRegStep(2);
+    setIsModalOpen(true);
   };
 
   if (!learners) return <div className="p-12 text-center text-text-secondary">Synchronizing records...</div>;
@@ -168,7 +242,7 @@ const LearnerRegistry: React.FC = () => {
             <span>Export Registry</span>
           </button>
           <button 
-            onClick={() => setIsModalOpen(true)}
+            onClick={() => { setEditingLearnerId(null); setIsModalOpen(true); }}
             className="erp-btn erp-btn-primary h-9 px-5 text-[13px] font-medium shadow-sm"
           >
             <Plus size={14} />
@@ -180,7 +254,7 @@ const LearnerRegistry: React.FC = () => {
       <div className="space-y-4">
         <div className="erp-card p-3 flex flex-wrap gap-4 items-center">
           <div className="relative flex-1 min-w-[240px]">
-            <Search size={16} className="absolute left-3 top-1/2 -track-y-1/2 -translate-y-1/2 text-text-secondary" />
+            <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-text-secondary" />
             <input 
               type="text" 
               placeholder="Search by LIN/NIN or Name" 
@@ -256,7 +330,7 @@ const LearnerRegistry: React.FC = () => {
                   <td className="erp-table-cell px-6 py-3 text-right">
                     <div className="flex items-center justify-end space-x-1">
                       <button 
-                        onClick={() => toast.info('Edit learner profile module coming soon')}
+                        onClick={() => handleEdit(learner)}
                         className="w-8 h-8 flex items-center justify-center text-text-secondary hover:text-primary-default hover:bg-primary-default/10 rounded transition-all"
                       >
                         <Edit2 size={14} />
@@ -305,8 +379,8 @@ const LearnerRegistry: React.FC = () => {
             {/* Modal Header */}
             <div className="px-6 py-5 bg-slate-900 text-white flex items-center justify-between">
               <div className="space-y-1">
-                <h3 className="text-[18px] font-bold tracking-tight">Learner Enrollment</h3>
-                <p className="text-white/50 text-[11px] font-bold uppercase tracking-widest leading-none">Primary baseline registry protocol v3.4</p>
+                <h3 className="text-[18px] font-bold tracking-tight">{editingLearnerId ? 'Edit Learner' : 'Learner Enrollment'}</h3>
+                <p className="text-white/50 text-[11px] font-bold uppercase tracking-widest leading-none">{editingLearnerId ? 'Update existing learner record' : 'Primary baseline registry protocol v3.4'}</p>
               </div>
               <button 
                 onClick={resetForm} 
@@ -544,7 +618,7 @@ const LearnerRegistry: React.FC = () => {
                     type="submit"
                     className="erp-btn erp-btn-primary h-10 px-10 text-[13px] font-medium shadow-md"
                   >
-                    Enroll Learner
+                    {editingLearnerId ? 'Update Learner' : 'Enroll Learner'}
                   </button>
                 </div>
               </form>

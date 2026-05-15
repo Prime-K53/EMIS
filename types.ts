@@ -2,6 +2,12 @@
 export type Priority = 'low' | 'medium' | 'high';
 export type Status = 'active' | 'pending' | 'archived' | 'verified';
 
+export interface ParentDetails {
+  relationship: string;
+  name: string;
+  phone: string;
+}
+
 export interface Learner {
   id?: number;
   schoolId?: number; // Linked School ID
@@ -16,6 +22,11 @@ export interface Learner {
   isSNE: boolean;
   sneCategory?: string;
   status: 'active' | 'transferred' | 'promoted';
+  isRefugee?: boolean;
+  isOrphan?: boolean;
+  parentDetails?: ParentDetails;
+  familiarLanguage?: string;
+  talents?: string[];
   createdAt: number;
 }
 
@@ -239,6 +250,7 @@ export interface PromotionRecord {
   repeated: number;
   droppedOut: number;
   year: number;
+  academicYear?: string;
 }
 
 export interface JuniorExamResult {
@@ -296,8 +308,10 @@ export interface Asset {
   schoolId: number;
   name: string;
   category: string;
-  condition: 'Good' | 'Fair' | 'Poor';
+  condition: 'Good' | 'Fair' | 'Poor' | 'Repairable';
   quantity: number;
+  serialNumber?: string;
+  lastAuditDate?: number;
 }
 
 export interface FinanceSIG {

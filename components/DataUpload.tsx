@@ -94,7 +94,7 @@ const DataUpload: React.FC = () => {
     if (!selectedSchool || !report) return;
     
     // Logical projection: Distribute school capacity across grades
-    const capacity = selectedSchool.capacity || 400;
+    const capacity = (selectedSchool.infrastructure?.classrooms || 8) * 45;
     const perGrade = Math.floor(capacity / 8);
     const perGender = Math.floor(perGrade / 2);
     
@@ -210,7 +210,7 @@ const DataUpload: React.FC = () => {
     setReport(finalized);
 
     // Recalculate Zonal Aggregates
-    await recalculateZonalAggregates(finalized.term, finalized.year);
+    const agg = await recalculateZonalAggregates(finalized.term, finalized.year);
     
     // Update School Profile & Audit
     if (selectedSchool) {
@@ -226,7 +226,7 @@ const DataUpload: React.FC = () => {
         await db.auditLogs.add({
             schoolId: selectedSchool.id!,
             action: 'update',
-            content: `Termly data submitted for ${finalized.term} ${finalized.year}. Validation metrics cleared.`,
+            content: `Termly data submitted for ${finalized.term} ${finalized.year}. Validation metrics cleared. Schools submitted: ${agg.schoolsSubmitted}/${agg.totalSchools}`,
             performedBy: 'Administrator',
             timestamp: Date.now()
         });
@@ -436,7 +436,7 @@ const DataUpload: React.FC = () => {
 
 
 const TabContent: React.FC<{ activeTab: string, report: Partial<TermlyReport>, setReport: (d: Partial<TermlyReport>) => void }> = ({ activeTab, report, setReport }) => {
-    const totalEnrolment = Object.values(report.enrolment || {}).reduce((acc, curr) => {
+    const totalEnrolment = Object.values(report.enrolment || {}).reduce<number>((acc, curr) => {
         const item = curr as { m: number, f: number };
         return acc + (Number(item.m) || 0) + (Number(item.f) || 0);
     }, 0);

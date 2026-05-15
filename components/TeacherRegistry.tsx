@@ -21,7 +21,8 @@ import {
   X,
   ArrowRight,
   Calculator,
-  CreditCard
+  CreditCard,
+  Download
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { db } from '../db';
@@ -86,11 +87,19 @@ const TeacherRegistry: React.FC = () => {
     e.preventDefault();
     if (!teacherForm.fullName || !teacherForm.nin) return;
     
-    await db.teachers.add({
+    const id = await db.teachers.add({
       ...teacherForm,
       createdAt: getTimestamp(),
       updatedAt: getTimestamp()
     } as Teacher);
+    
+    await db.auditLogs.add({
+      schoolId: teacherForm.schoolId || 1,
+      action: 'create',
+      content: `Enrolled teacher: ${teacherForm.fullName} (${teacherForm.tpNumber || teacherForm.nin})`,
+      performedBy: 'Administrator',
+      timestamp: Date.now()
+    });
     
     toast.success('Personnel enrollment complete');
     setIsNewTeacherModalOpen(false);
@@ -102,6 +111,22 @@ const TeacherRegistry: React.FC = () => {
     });
   };
 
+  const handleDeleteTeacher = async (id: number) => {
+    const teacher = teachers.find(t => t.id === id);
+    if (!teacher || !window.confirm(`Delete ${teacher.fullName}? This action cannot be undone.`)) return;
+    try {
+      await db.teachers.delete(id);
+      await db.auditLogs.add({
+        schoolId: teacher.schoolId || 1,
+        action: 'delete',
+        content: `Deleted teacher record: ${teacher.fullName} (${teacher.tpNumber || teacher.nin})`,
+        performedBy: 'Administrator',
+        timestamp: Date.now()
+      });
+      toast.success('Teacher record deleted');
+    } catch { toast.error('Failed to delete teacher record'); }
+  };
+
   const handleInitiateTransfer = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!transferForm.teacherId || !transferForm.destinationSchoolId) return;
@@ -110,6 +135,15 @@ const TeacherRegistry: React.FC = () => {
       ...transferForm,
       initiatedDate: getTimestamp()
     } as TeacherTransfer);
+
+    const teacher = teachers.find(t => t.id === transferForm.teacherId);
+    await db.auditLogs.add({
+      schoolId: transferForm.sourceSchoolId || 1,
+      action: 'update',
+      content: `Transfer initiated for ${teacher?.fullName || 'Unknown'} to station ${transferForm.destinationSchoolId}`,
+      performedBy: 'Administrator',
+      timestamp: Date.now()
+    });
 
     toast.success('Transfer request initiated and logged');
     setIsTransferModalOpen(false);
@@ -128,12 +162,33 @@ const TeacherRegistry: React.FC = () => {
       initiatedAt: getTimestamp()
     } as TeacherLeave);
 
+    const teacher = teachers.find(t => t.id === leaveForm.teacherId);
+    await db.auditLogs.add({
+      schoolId: 1,
+      action: 'update',
+      content: `Leave applied for ${teacher?.fullName || 'Unknown'}: ${leaveForm.type} (${leaveForm.startDate} to ${leaveForm.endDate})`,
+      performedBy: 'Administrator',
+      timestamp: Date.now()
+    });
+
     toast.success('Leave application submitted for approval');
     setIsLeaveModalOpen(false);
     setLeaveForm({
       teacherId: undefined, type: 'Annual', startDate: '', endDate: '',
       reason: '', status: 'Pending', collegeName: '', courseOfStudy: ''
     });
+  };
+
+  const handleTeacherExport = () => {
+    if (!teachers.length) { toast.error('No records to export'); return; }
+    const headers = ['Full Name', 'TP Number', 'NIN', 'Gender', 'Grade', 'Status', 'School ID', 'Assigned Standard'];
+    const rows = teachers.map(t => [t.fullName, t.tpNumber || '', t.nin, t.gender, t.teachingGrade, t.status, String(t.schoolId || ''), t.assignedStandard || '']);
+    const csv = [headers.join(','), ...rows.map(r => r.map(v => `"${v.replace(/"/g, '""')}"`).join(','))].join('\n');
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a'); a.href = url; a.download = `teacher_registry_${new Date().toISOString().split('T')[0]}.csv`;
+    a.click(); URL.revokeObjectURL(url);
+    toast.success(`Exported ${teachers.length} teacher records`);
   };
 
   // Analytics Calculations
@@ -348,16 +403,23 @@ const TeacherRegistry: React.FC = () => {
                     >
                       <option value="all">Any Grade</option>
                       {TEACHING_GRADES.map(g => <option key={g} value={g}>{g}</option>)}
-                    </select>
-                  </div>
-                  <button 
-                    onClick={() => setIsNewTeacherModalOpen(true)}
-                    className="erp-btn erp-btn-primary h-9 w-full md:w-auto px-5 whitespace-nowrap text-[13px] font-medium"
-                  >
-                    <Plus size={16} />
-                    <span>Enroll Personnel</span>
-                  </button>
-                </div>
+                  </select>
+                   </div>
+                   <button 
+                     onClick={handleTeacherExport}
+                     className="erp-btn erp-btn-secondary h-9 px-3 whitespace-nowrap text-[12px] font-medium"
+                     title="Export CSV"
+                   >
+                     <Download size={14} />
+                   </button>
+                   <button 
+                     onClick={() => setIsNewTeacherModalOpen(true)}
+                     className="erp-btn erp-btn-primary h-9 w-full md:w-auto px-5 whitespace-nowrap text-[13px] font-medium"
+                   >
+                     <Plus size={16} />
+                     <span>Enroll Personnel</span>
+                   </button>
+                 </div>
 
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                   {teachers.filter(t => {
@@ -369,10 +431,11 @@ const TeacherRegistry: React.FC = () => {
                     return matchesSearch && matchesGender && matchesGrade;
                   }).map(teacher => (
                     <TeacherCard 
-                      key={teacher.id} 
+                      key={teacher.id}
                       teacher={teacher} 
                       onClick={() => setSelectedTeacherId(teacher.id!)}
                       schoolName={schools.find(s => s.id === teacher.schoolId)?.name}
+                      onDelete={handleDeleteTeacher}
                     />
                   ))}
                 </div>
@@ -495,29 +558,29 @@ const TeacherRegistry: React.FC = () => {
                      </tr>
                    </thead>
                    <tbody className="divide-y divide-gray-100 text-[13px]">
-                     {transfers.sort((a,b) => b.requestDate.localeCompare(a.requestDate)).map(transfer => {
-                       const teacher = teachers.find(t => t.id === transfer.teacherId);
-                       const fromSchool = schools.find(s => s.id === transfer.fromSchoolId);
-                       const toSchool = schools.find(s => s.id === transfer.toSchoolId);
-                       return (
-                         <tr key={transfer.id} className="erp-table-row">
+                       {transfers.sort((a,b) => (b.initiatedDate || 0) - (a.initiatedDate || 0)).map(tr => {
+                        const teacher = teachers.find(t => t.id === tr.teacherId);
+                        const fromSchool = schools.find(s => s.id === tr.sourceSchoolId);
+                        const toSchool = schools.find(s => s.id === tr.destinationSchoolId);
+                        return (
+                          <tr key={tr.id} className="erp-table-row">
                            <td className="erp-table-cell px-6 py-3">
                              <p className="font-semibold text-text-primary leading-tight">{teacher?.fullName || 'Unknown'}</p>
                              <p className="text-[11px] text-text-secondary mt-0.5">{teacher?.tpNumber}</p>
                            </td>
                            <td className="erp-table-cell px-6 py-3 text-text-primary">{fromSchool?.name || '---'}</td>
                            <td className="erp-table-cell px-6 py-3 text-text-primary">{toSchool?.name || '---'}</td>
-                           <td className="erp-table-cell px-6 py-3">
-                              <span className="font-medium text-text-primary">{transfer.reason}</span>
-                              <p className="text-[11px] text-text-secondary mt-0.5">{new Date(transfer.requestDate).toLocaleDateString()}</p>
+                            <td className="erp-table-cell px-6 py-3">
+                               <span className="font-medium text-text-primary">{tr.reason}</span>
+                               <p className="text-[11px] text-text-secondary mt-0.5">{tr.initiatedDate ? new Date(tr.initiatedDate).toLocaleDateString() : '---'}</p>
                            </td>
                            <td className="erp-table-cell px-6 py-3">
                              <div className={`erp-badge text-[10px] py-0.5 px-2 ${
-                               transfer.status === 'Completed' ? 'bg-success/10 text-success border-success/20' :
-                               transfer.status === 'Rejected' ? 'bg-error/10 text-error border-error/20' :
+                               tr.status === 'Completed' ? 'bg-success/10 text-success border-success/20' :
+                               tr.status === 'Rejected' ? 'bg-error/10 text-error border-error/20' :
                                'bg-warning/10 text-warning border-warning/20'
                              }`}>
-                               {transfer.status}
+                               {tr.status}
                              </div>
                            </td>
                          </tr>
@@ -592,18 +655,43 @@ const TeacherRegistry: React.FC = () => {
                                 <div>
                                    <p className="text-[13px] font-bold text-text-primary">{new Date(leave.endDate).toLocaleDateString()}</p>
                                    <p className="text-[10px] font-bold text-text-secondary uppercase">To</p>
+                  </div>
+                              </div>
+                            </td>
+                            <td className="erp-table-cell px-6 py-3">
+                              <div className="flex items-center space-x-2">
+                                <div className={`erp-badge text-[10px] py-0.5 px-2 ${
+                                   leave.status === 'Completed' ? 'bg-success/10 text-success border-success/20' :
+                                   leave.status === 'Rejected' ? 'bg-error/10 text-error border-error/20' :
+                                   'bg-warning/10 text-warning border-warning/20'
+                                 }`}>
+                                   {leave.status}
+                                 </div>
+                                 {leave.status === 'Pending' && (
+                                   <div className="flex space-x-1">
+                                     <button onClick={async () => { await db.teacherLeaves.update(leave.id!, { status: 'Approved' }); toast.success('Leave approved'); }} className="w-6 h-6 rounded bg-success/10 text-success flex items-center justify-center hover:bg-success/20 text-[10px] font-bold">&#10003;</button>
+                                     <button onClick={async () => { await db.teacherLeaves.update(leave.id!, { status: 'Rejected' }); toast.warning('Leave rejected'); }} className="w-6 h-6 rounded bg-error/10 text-error flex items-center justify-center hover:bg-error/20 text-[10px] font-bold">&#10007;</button>
+                                   </div>
+                                 )}
+                              </div>
+                            </td>
+                            <td className="erp-table-cell px-8 py-5">
+                              <div className="flex items-center space-x-2">
+                                <div className={`erp-badge ${
+                                  leave.status === 'Approved' ? 'bg-success/10 text-success border-success/20' :
+                                  leave.status === 'Rejected' ? 'bg-error/10 text-error border-error/20' :
+                                  'bg-warning/10 text-warning border-warning/20'
+                                }`}>
+                                  {leave.status}
                                 </div>
-                             </div>
-                           </td>
-                           <td className="erp-table-cell px-8 py-5">
-                             <div className={`erp-badge ${
-                               leave.status === 'Approved' ? 'bg-success/10 text-success border-success/20' :
-                               leave.status === 'Rejected' ? 'bg-error/10 text-error border-error/20' :
-                               'bg-warning/10 text-warning border-warning/20'
-                             }`}>
-                               {leave.status}
-                             </div>
-                           </td>
+                                {leave.status === 'Pending' && (
+                                  <div className="flex space-x-1">
+                                    <button onClick={async () => { await db.teacherLeaves.update(leave.id!, { status: 'Approved' }); toast.success('Leave approved'); }} className="w-6 h-6 rounded bg-success/10 text-success flex items-center justify-center hover:bg-success/20 text-[10px] font-bold">&#10003;</button>
+                                    <button onClick={async () => { await db.teacherLeaves.update(leave.id!, { status: 'Rejected' }); toast.warning('Leave rejected'); }} className="w-6 h-6 rounded bg-error/10 text-error flex items-center justify-center hover:bg-error/20 text-[10px] font-bold">&#10007;</button>
+                                  </div>
+                                )}
+                              </div>
+                            </td>
                            <td className="erp-table-cell px-8 py-5 text-right">
                              <button className="text-[11px] font-bold text-primary-default hover:underline">Download cert</button>
                            </td>
@@ -848,9 +936,17 @@ const FormItem = ({ label, children }: { label: string, children: React.ReactNod
   </div>
 );
 
-const TeacherCard = ({ teacher, onClick, schoolName }: { teacher: Teacher, onClick: () => void, schoolName?: string }) => (
-  <div onClick={onClick} className="erp-card p-6 hover:border-primary-default transition-all group flex flex-col h-full bg-white cursor-pointer shadow-sm">
-    <div className="flex items-start justify-between mb-6">
+const TeacherCard = ({ teacher, onClick, schoolName, onDelete }: { teacher: Teacher, onClick: () => void, schoolName?: string, key?: React.Key, onDelete?: (id: number) => void }) => (
+  <div className="erp-card p-6 hover:border-primary-default transition-all group flex flex-col h-full bg-white cursor-pointer shadow-sm relative">
+    {onDelete && (
+      <button 
+        onClick={(e) => { e.stopPropagation(); onDelete(teacher.id!); }}
+        className="absolute top-2 right-2 w-7 h-7 rounded flex items-center justify-center text-text-secondary opacity-0 group-hover:opacity-100 hover:bg-error/10 hover:text-error transition-all"
+      >
+        <X size={14} />
+      </button>
+    )}
+    <div onClick={onClick} className="flex items-start justify-between mb-6">
        <div className={`w-12 h-12 rounded flex items-center justify-center ${teacher.gender === 'F' ? 'bg-error/5 text-error border border-error/10' : 'bg-primary-default/5 text-primary-default border border-primary-default/10'}`}>
           <User size={24} />
        </div>
