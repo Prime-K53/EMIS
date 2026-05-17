@@ -1,4 +1,3 @@
-
 export type Priority = 'low' | 'medium' | 'high';
 export type Status = 'active' | 'pending' | 'archived' | 'verified';
 
@@ -10,9 +9,9 @@ export interface ParentDetails {
 
 export interface Learner {
   id?: number;
-  schoolId?: number; // Linked School ID
-  lin?: string; // Learner Identification Number
-  nin?: string; // National Identification Number
+  schoolId?: number;
+  lin?: string;
+  nin?: string;
   firstName: string;
   surname: string;
   gender: 'M' | 'F';
@@ -28,6 +27,10 @@ export interface Learner {
   familiarLanguage?: string;
   talents?: string[];
   createdAt: number;
+  academicYearId?: number;
+  termId?: number;
+  weekId?: number;
+  month?: string;
 }
 
 export type StaffStatus = 'Active' | 'On Leave' | 'Transferred' | 'Retired';
@@ -35,36 +38,41 @@ export type TeachingGrade = 'Auxiliary' | 'Grade G' | 'Grade F' | 'Grade E' | 'G
 
 export interface Teacher {
   id?: number;
-  schoolId?: number; // Current Duty Station (Linked School ID)
-  emisCode?: string; // School EMIS code
-  tpNumber?: string; // Employment Number (TP)
-  registrationNumber?: string; // MoE Registration Number
-  nin: string; // National ID
+  schoolId?: number;
+  emisCode?: string;
+  tpNumber?: string;
+  registrationNumber?: string;
+  nin: string;
   fullName: string;
   gender: 'M' | 'F';
   dateOfBirth: string;
   phoneNumber: string;
   homeAddress: string;
   
-  // Professional Status
   teachingGrade: TeachingGrade;
   highestQualification: string;
   specialization: string;
   dateOfFirstAppointment: string;
   dateOfAppointmentToCurrentGrade: string;
   
-  // Assignment
   status: StaffStatus;
-  responsibility?: string; // e.g., Section Head, Head Teacher
-  assignedStandard?: string; // e.g., P-Klass, Standard 1, etc.
+  responsibility?: string;
+  assignedStandard?: string;
   
-  // TCM Details
   tcmRegistrationNumber?: string;
   tcmLicenseNumber?: string;
   tcmLicenseExpiryDate?: string;
 
   createdAt: number;
   updatedAt: number;
+  academicYearId?: number;
+  termId?: number;
+  transferHistory?: {
+    fromSchoolId: number;
+    toSchoolId: number;
+    reason: string;
+    date: number;
+  }[];
 }
 
 export interface TeacherTransfer {
@@ -76,6 +84,7 @@ export interface TeacherTransfer {
   status: 'Pending' | 'Approved' | 'Rejected' | 'Completed';
   initiatedDate: number;
   processedDate?: number;
+  academicYearId?: number;
 }
 
 export interface TeacherLeave {
@@ -87,32 +96,33 @@ export interface TeacherLeave {
   reason: string;
   status: 'Pending' | 'Approved' | 'Rejected';
   
-  // Study leave specific
   collegeName?: string;
   courseOfStudy?: string;
   ministryApproval?: boolean;
   
   initiatedAt: number;
+  academicYearId?: number;
+  termId?: number;
 }
 
 export interface Infrastructure {
   id?: number;
+  schoolId?: number;
   type: string;
   count: number;
   condition: 'Good' | 'Fair' | 'Poor';
   lastUpdated: number;
+  academicYearId?: number;
 }
 
 export interface School {
   id?: number;
-  // A. Identification
   name: string;
   emisCode: string;
   registrationNumber: string;
   level: 'Primary' | 'Secondary' | 'Technical' | 'Special Needs' | 'Tertiary';
   status: 'active' | 'inactive' | 'closed' | 'merged';
   
-  // B. Location Details
   region: 'Northern' | 'Central' | 'Southern';
   district: string;
   zone?: string;
@@ -123,8 +133,7 @@ export interface School {
   accessibility: 'Tarred Road' | 'Earth Road' | 'Footpath';
   distanceFromTown: number;
 
-  // C. Governance & Management
-  ownership: string; // Government, Private, Faith-Based, NGO, etc.
+  ownership: string;
   boardDetails?: string;
   headTeacher: {
     name: string;
@@ -134,7 +143,6 @@ export interface School {
     contact: string;
   };
 
-  // D. Infrastructure
   infrastructure: {
     classrooms: number;
     offices: number;
@@ -145,11 +153,10 @@ export interface School {
     waterSource: string;
     electricitySource: string;
     internetAccess: boolean;
-    landSize: number; // in hectares
+    landSize: number;
     landOwnership: string;
   };
 
-  // F. History
   yearEstablished: number;
   yearUpgraded?: number;
   performanceNotes?: string;
@@ -167,18 +174,21 @@ export interface AuditLog {
   content: string;
   performedBy: string;
   timestamp: number;
+  academicYearId?: number;
 }
 
 export interface TermlyReport {
-  id?: string; // composite key: schoolId-term-year
+  id?: string;
   schoolId: number;
   term: string;
   year: number;
   status: 'Draft' | 'Submitted';
   lastSaved: number;
-  completeness: number; // 0 to 1
+  completeness: number;
+  academicYearId?: number;
+  month?: string;
+  weekId?: number;
   
-  // Data Sections
   enrolment: {
     grade1: { m: number, f: number, overageM: number, overageF: number, underageM: number, underageF: number };
     grade2: { m: number, f: number, overageM: number, overageF: number, underageM: number, underageF: number };
@@ -192,7 +202,9 @@ export interface TermlyReport {
   
   attendance: {
     weeklyTotals: { grade: string, m: number, f: number }[];
-    teacherAttendance?: { m: number, f: number, present: number, total: number }[];
+    teacherAttendance?: { day: string, m: number, f: number, present: number, total: number }[];
+    teacherDaily?: { day: string; teacherId: number; name: string; gender: string; status: 'present' | 'absent' | 'sick' | 'excused' }[];
+    learnerDaily?: { day: string, grade: string, m: number, f: number }[];
   };
   
   teachers: {
@@ -232,6 +244,27 @@ export interface TermlyReport {
   specialNeeds: {
     learners: { type: string, m: number, f: number }[];
   };
+  
+  ifa?: {
+    observations: {
+      teacherName: string;
+      grade: string;
+      subject: string;
+      lessonPlanChecked: boolean;
+      qualityScore: number;
+      dateObserved: string;
+      notes: string;
+    }[];
+  };
+
+  pslce?: {
+    registered: number;
+    sat: number;
+    passed: number;
+    male: { registered: number; sat: number; passed: number };
+    female: { registered: number; sat: number; passed: number };
+    grades: { A: number; B: number; C: number; D: number };
+  };
 }
 
 export interface EMISStats {
@@ -250,7 +283,7 @@ export interface PromotionRecord {
   repeated: number;
   droppedOut: number;
   year: number;
-  academicYear?: string;
+  academicYearId?: number;
 }
 
 export interface JuniorExamResult {
@@ -263,6 +296,7 @@ export interface JuniorExamResult {
   failed: number;
   term: number;
   year: number;
+  academicYearId?: number;
 }
 
 export interface StandardisedExamScore {
@@ -280,6 +314,7 @@ export interface StandardisedExamScore {
   total: number;
   term: number;
   year: number;
+  academicYearId?: number;
 }
 
 export interface PSLCEResult {
@@ -291,6 +326,7 @@ export interface PSLCEResult {
   sat: number;
   passed: number;
   grades: { A: number, B: number, C: number, D: number };
+  academicYearId?: number;
 }
 
 export interface PSLCESelection {
@@ -301,6 +337,7 @@ export interface PSLCESelection {
   selectedSchool: string;
   schoolType: 'National' | 'District' | 'Community' | 'Private';
   year: number;
+  academicYearId?: number;
 }
 
 export interface Asset {
@@ -312,6 +349,7 @@ export interface Asset {
   quantity: number;
   serialNumber?: string;
   lastAuditDate?: number;
+  academicYearId?: number;
 }
 
 export interface FinanceSIG {
@@ -321,6 +359,8 @@ export interface FinanceSIG {
   amount: number;
   status: 'Spent' | 'Planned';
   date: number;
+  academicYearId?: number;
+  termId?: number;
 }
 
 export interface InspectionRecord {
@@ -328,11 +368,140 @@ export interface InspectionRecord {
   schoolId: number;
   date: number;
   inspectorName: string;
-  score: number; // 0-100
+  score: number;
   sections: {
-    leadership: number; // 1-5
-    teaching: number; // 1-5
-    community: number; // 1-5
+    leadership: number;
+    teaching: number;
+    community: number;
   };
   comments: string;
+  academicYearId?: number;
+}
+
+export interface AppSettings {
+  id: number;
+  zonalName: string;
+  zoneCode: string;
+  district: string;
+  educationDivision: string;
+  physicalAddress: string;
+  phoneNumber: string;
+  email: string;
+  motto: string;
+  logoUrl: string;
+  setupComplete: boolean;
+  academicYearStart: string;
+  academicYearEnd: string;
+  numberOfTerms: number;
+  weeksPerTerm: number;
+  monthsPerTerm: number;
+  adminName: string;
+  adminUsername: string;
+  adminPassword: string;
+  securityQuestion: string;
+  securityAnswer: string;
+  enabledModules: string[];
+  createdAt: number;
+}
+
+export interface AcademicYear {
+  id?: number;
+  year: number;
+  startDate: string;
+  endDate: string;
+  status: 'current' | 'active' | 'archived';
+  createdAt: number;
+}
+
+export interface AcademicTerm {
+  id?: number;
+  academicYearId: number;
+  name: string;
+  startDate: string;
+  endDate: string;
+  weeksCount: number;
+  order: number;
+}
+
+export interface AcademicWeek {
+  id?: number;
+  termId: number;
+  weekNumber: number;
+  startDate: string;
+  endDate: string;
+  status: 'locked' | 'active' | 'pending';
+}
+
+export interface MonthlyPeriod {
+  id?: number;
+  termId: number;
+  name: string;
+  startDate: string;
+  endDate: string;
+  monthIndex: number;
+}
+
+export interface PeriodContext {
+  schoolYear: number;
+  term: string;
+  month: string;
+  week: string;
+  schoolId?: number;
+}
+
+export interface WeeklyReport {
+  id?: number;
+  schoolId: number;
+  academicYearId: number;
+  termId: number;
+  weekId: number;
+  month: string;
+  reportType: string;
+  data: any;
+  status: 'draft' | 'submitted' | 'locked';
+  submittedAt?: number;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface MonthlyReport {
+  id?: number;
+  schoolId: number;
+  academicYearId: number;
+  termId: number;
+  monthlyPeriodId: number;
+  aggregatedFromWeeks: number[];
+  data: any;
+  status: 'draft' | 'submitted' | 'locked';
+  createdAt: number;
+}
+
+export interface TermReport {
+  id?: number;
+  schoolId: number;
+  academicYearId: number;
+  termId: number;
+  aggregatedFromMonths: number[];
+  data: any;
+  status: 'draft' | 'submitted' | 'locked';
+  createdAt: number;
+}
+
+export interface ZonalSchool {
+  id?: number;
+  academicYearId: number;
+  schoolId: number;
+  enrollment: number;
+  attendance: number;
+  staff: number;
+  createdAt: number;
+}
+
+export interface Department {
+  id?: number;
+  name: string;
+  schoolId?: number;
+  executiveMembers: { teacherId: number; role: string }[];
+  boardMembers: { teacherId: number; role: string }[];
+  createdAt: number;
 }

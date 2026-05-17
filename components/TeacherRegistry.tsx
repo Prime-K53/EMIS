@@ -11,13 +11,13 @@ import {
   ArrowRightLeft, 
   LogOut, 
   ChevronRight,
-  BarChart3,
+  ChartBar,
   ClipboardList,
   ShieldCheck,
   User,
   Activity,
   ArrowLeft,
-  CheckCircle,
+  CircleCheck,
   X,
   ArrowRight,
   Calculator,
@@ -81,6 +81,7 @@ const TeacherRegistry: React.FC = () => {
   });
 
   const [isStaffingReportOpen, setIsStaffingReportOpen] = useState(false);
+  const [isRetirementCalcOpen, setIsRetirementCalcOpen] = useState(false);
 
   // Handlers
   const handleAddTeacher = async (e: React.FormEvent) => {
@@ -218,7 +219,7 @@ const TeacherRegistry: React.FC = () => {
   };
 
   const menuItems = [
-    { id: 'dashboard', label: 'Analytics', icon: <BarChart3 size={18} /> },
+    { id: 'dashboard', label: 'Analytics', icon: <ChartBar size={18} /> },
     { id: 'registry', label: 'Profiles', icon: <Users size={18} /> },
     { id: 'tcm', label: 'TCM Compliance', icon: <ShieldCheck size={18} /> },
     { id: 'transfers', label: 'Deploy & Transfer', icon: <ArrowRightLeft size={18} /> },
@@ -526,7 +527,7 @@ const TeacherRegistry: React.FC = () => {
               </div>
               <div className="erp-card p-4 bg-white flex items-center space-x-4">
                  <div className="w-10 h-10 rounded bg-success/10 text-success flex items-center justify-center">
-                    <CheckCircle size={20} />
+                    <CircleCheck size={20} />
                  </div>
                  <div>
                     <p className="text-[20px] font-bold text-text-primary leading-tight">{transfers.filter(t => t.status === 'Completed').length}</p>
@@ -712,6 +713,7 @@ const TeacherRegistry: React.FC = () => {
                description="Automated projection of personnel retirement dates based on statutory guidelines and age profiles."
                icon={Calculator}
                color="bg-slate-700"
+               onClick={() => setIsRetirementCalcOpen(true)}
             />
             <ToolCard 
                title="Staffing Audit" 
@@ -855,6 +857,69 @@ const TeacherRegistry: React.FC = () => {
                 <button type="submit" className="erp-btn erp-btn-primary w-full h-12">Process deployment status</button>
               </div>
             </form>
+          </Modal>
+        )}
+
+        {isRetirementCalcOpen && (
+          <Modal title="Retirement Calculator" onClose={() => setIsRetirementCalcOpen(false)}>
+            <div className="space-y-4">
+              <div className="flex items-center gap-3 p-3 bg-slate-50 border border-slate-200 rounded">
+                <Calculator size={20} className="text-slate-600" />
+                <div>
+                  <p className="text-[13px] font-bold text-text-primary">Statutory Retirement Age: 60 Years</p>
+                  <p className="text-[11px] text-text-secondary">Projected dates are calculated based on date of birth as per Malawi public service regulations.</p>
+                </div>
+              </div>
+              <div className="max-h-[500px] overflow-y-auto pr-1">
+                <table className="w-full text-left border-collapse">
+                  <thead>
+                    <tr className="bg-gray-50 border-b border-border-default text-[10px] font-bold uppercase tracking-widest text-text-secondary">
+                      <th className="px-3 py-2">Name</th>
+                      <th className="px-3 py-2">DOB</th>
+                      <th className="px-3 py-2">Grade</th>
+                      <th className="px-3 py-2">Retirement Date</th>
+                      <th className="px-3 py-2">Status</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-100 text-[12px]">
+                    {teachers.filter(t => t.dateOfBirth).map(t => {
+                      const retirementDate = new Date(t.dateOfBirth);
+                      retirementDate.setFullYear(retirementDate.getFullYear() + 60);
+                      const fourMonthsFromNow = new Date();
+                      fourMonthsFromNow.setMonth(fourMonthsFromNow.getMonth() + 4);
+                      const isUrgent = retirementDate > new Date() && retirementDate <= fourMonthsFromNow;
+                      const isRetired = retirementDate <= new Date();
+                      return (
+                        <tr key={t.id} className={`hover:bg-gray-50/50 ${isUrgent ? 'bg-amber-50' : isRetired ? 'bg-red-50' : ''}`}>
+                          <td className="px-3 py-2 font-semibold text-text-primary">{t.fullName}</td>
+                          <td className="px-3 py-2 text-text-secondary">{new Date(t.dateOfBirth).toLocaleDateString()}</td>
+                          <td className="px-3 py-2 text-text-secondary">{t.teachingGrade}</td>
+                          <td className="px-3 py-2 font-bold">{retirementDate.toLocaleDateString()}</td>
+                          <td className="px-3 py-2">
+                            {isRetired ? (
+                              <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-red-100 text-red-700">Retired</span>
+                            ) : isUrgent ? (
+                              <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-amber-100 text-amber-700">Due within 4 months</span>
+                            ) : (
+                              <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-emerald-100 text-emerald-700">
+                                {Math.floor((retirementDate.getTime() - Date.now()) / (365.25 * 24 * 60 * 60 * 1000))} years away
+                              </span>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+              <div className="flex items-center justify-between pt-3 border-t border-border-default text-[11px] text-text-secondary">
+                <span>{teachers.filter(t => t.dateOfBirth).length} personnel on record</span>
+                <span className="flex items-center gap-3">
+                  <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-amber-400"></span> Due within 4 months</span>
+                  <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-red-400"></span> Past retirement age</span>
+                </span>
+              </div>
+            </div>
           </Modal>
         )}
 

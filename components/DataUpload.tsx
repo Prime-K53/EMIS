@@ -1,5 +1,5 @@
 
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { 
   Plus,
   Search,
@@ -15,34 +15,45 @@ import {
   BadgeDollarSign,
   Accessibility,
   Save,
-  CheckCircle2,
-  Lock,
-  Unlock,
-  AlertCircle,
-  Hash
+  CircleCheck,
+  LockOpen,
+  CircleAlert,
+  Hash,
+  ClipboardCheck,
+  X
 } from 'lucide-react';
 import { useLiveQuery } from 'dexie-react-hooks';
+import { toast } from 'sonner';
 import { db } from '../db';
 import { TermlyReport } from '../types';
 import { recalculateZonalAggregates } from '../services/analyticsService';
 import { validateTermlyReport } from '../services/validationService';
+import { useGlobal } from '../App';
+import RecordsRegistry from './RecordsRegistry';
 
 const TABS = [
-  { id: 'enrolment', label: 'Enrolment', icon: Users },
-  { id: 'attendance', label: 'Attendance', icon: Clock },
-  { id: 'teachers', label: 'Teachers', icon: GraduationCap },
-  { id: 'infrastructure', label: 'Infrastructure', icon: Building2 },
-  { id: 'textbooks', label: 'Textbooks', icon: BookOpen },
-  { id: 'exams', label: 'Exams & Results', icon: Hash },
-  { id: 'health', label: 'Health', icon: HeartPulse },
-  { id: 'finance', label: 'Finance', icon: BadgeDollarSign },
-  { id: 'specialNeeds', label: 'Special Needs', icon: Accessibility }
+  { id: 'attendance', label: 'Attendance', icon: Clock, frequency: 'daily' as const },
+  { id: 'enrolment', label: 'Enrolment', icon: Users, frequency: 'monthly' as const },
+  { id: 'teachers', label: 'Teachers', icon: GraduationCap, frequency: 'monthly' as const },
+  { id: 'health', label: 'Health', icon: HeartPulse, frequency: 'monthly' as const },
+  { id: 'ifa', label: 'IFA', icon: ClipboardCheck, frequency: 'monthly' as const },
+  { id: 'textbooks', label: 'Textbooks', icon: BookOpen, frequency: 'monthly' as const },
+  { id: 'exams', label: 'Exams & Results', icon: Hash, frequency: 'termly' as const },
+  { id: 'infrastructure', label: 'Infrastructure', icon: Building2, frequency: 'termly' as const },
+  { id: 'finance', label: 'Finance', icon: BadgeDollarSign, frequency: 'termly' as const },
+  { id: 'specialNeeds', label: 'Special Needs', icon: Accessibility, frequency: 'termly' as const },
+  { id: 'pslce', label: 'PSLCE Results', icon: GraduationCap, frequency: 'yearly' as const },
+  { id: 'infrastructureRegistry', label: 'Infrastructure Registry', icon: Building2, frequency: 'yearly' as const },
+  { id: 'materialsRegistry', label: 'Materials Registry', icon: BookOpen, frequency: 'yearly' as const },
+  { id: 'financeRegistry', label: 'Finance Registry', icon: BadgeDollarSign, frequency: 'yearly' as const }
 ];
 
-const INITIAL_REPORT_DATA = (schoolId: number): Partial<TermlyReport> => ({
+const INITIAL_REPORT_DATA = (schoolId: number, term?: string, year?: number, month?: string, weekId?: number): Partial<TermlyReport> => ({
   schoolId,
-  term: 'Term 1',
-  year: 2024,
+  term: term || 'Term 1',
+  year: year || new Date().getFullYear(),
+  month,
+  weekId,
   status: 'Draft',
   lastSaved: Date.now(),
   completeness: 0,
@@ -58,7 +69,12 @@ const INITIAL_REPORT_DATA = (schoolId: number): Partial<TermlyReport> => ({
   },
   attendance: { 
     weeklyTotals: [],
-    teacherAttendance: [{ m: 0, f: 0, present: 0, total: 0 }]
+    teacherAttendance: [{ day: 'Monday', m: 0, f: 0, present: 0, total: 0 }],
+    learnerDaily: (() => {
+      const ds = ['Monday','Tuesday','Wednesday','Thursday','Friday'];
+      const grs = ['Standard 1','Standard 2','Standard 3','Standard 4','Standard 5','Standard 6','Standard 7','Standard 8'];
+      return ds.map(d => grs.map(g => ({ day: d, grade: g, m: 0, f: 0 }))).flat();
+    })()
   },
   teachers: { summary: [] },
   infrastructure: {
@@ -74,13 +90,16 @@ const INITIAL_REPORT_DATA = (schoolId: number): Partial<TermlyReport> => ({
   exams: { results: [] },
   health: { feedingProgramme: false, beneficiaries: 0, washStatus: 'Adequate' },
   finance: { grantsReceived: 0, grantsSpent: 0, expenditureCategories: [] },
-  specialNeeds: { learners: [] }
+  specialNeeds: { learners: [] },
+  pslce: { registered: 0, sat: 0, passed: 0, male: { registered: 0, sat: 0, passed: 0 }, female: { registered: 0, sat: 0, passed: 0 }, grades: { A: 0, B: 0, C: 0, D: 0 } }
 });
 
 const DataUpload: React.FC = () => {
   const schools = useLiveQuery(() => db.schools.toArray());
+  const { currentPeriod } = useGlobal();
   const [selectedSchoolId, setSelectedSchoolId] = useState<number | null>(null);
-  const [activeTab, setActiveTab] = useState('enrolment');
+  const [selectedFrequency, setSelectedFrequency] = useState<'daily' | 'monthly' | 'termly' | 'yearly'>('monthly');
+  const [activeTab, setActiveTab] = useState(() => TABS.find(t => t.frequency === 'monthly')?.id || 'attendance');
   const [report, setReport] = useState<Partial<TermlyReport> | null>(null);
   const [showSaveMessage, setShowSaveMessage] = useState(false);
 
@@ -94,7 +113,7 @@ const DataUpload: React.FC = () => {
     if (!selectedSchool || !report) return;
     
     // Logical projection: Distribute school capacity across grades
-    const capacity = (selectedSchool.infrastructure?.classrooms || 8) * 45;
+    const capacity = (selectedSchool.infrastructure?.classrooms || 0) * 45;
     const perGrade = Math.floor(capacity / 8);
     const perGender = Math.floor(perGrade / 2);
     
@@ -113,12 +132,12 @@ const DataUpload: React.FC = () => {
     });
 
     const baselineInfrastructure = {
-        classroomsPermanent: selectedSchool.infrastructure.classrooms || 8,
+        classroomsPermanent: selectedSchool.infrastructure.classrooms || 0,
         classroomsTemporary: 0,
-        toiletsBoys: Math.floor(selectedSchool.infrastructure.latrines / 2) || 4,
-        toiletsGirls: Math.ceil(selectedSchool.infrastructure.latrines / 2) || 4,
-        toiletsStaff: 2,
-        waterSource: 'Borehole',
+        toiletsBoys: Math.floor(selectedSchool.infrastructure.latrines / 2) || 0,
+        toiletsGirls: Math.ceil(selectedSchool.infrastructure.latrines / 2) || 0,
+        toiletsStaff: 0,
+        waterSource: '',
         electricity: false
     };
 
@@ -138,25 +157,29 @@ const DataUpload: React.FC = () => {
   // Load report when school changes
   useEffect(() => {
     if (selectedSchoolId) {
-      const reportId = `${selectedSchoolId}-Term1-2024`;
+      const periodTerm = currentPeriod?.term.name || 'Term 1';
+      const periodYear = currentPeriod?.academicYear.year || new Date().getFullYear();
+      const periodMonth = currentPeriod?.month?.name;
+      const periodWeekId = currentPeriod?.week?.id;
+      const reportId = `${selectedSchoolId}-${periodTerm.replace(/\s/g, '')}-${periodYear}`;
       db.termlyReports.get(reportId).then(existingReport => {
         if (existingReport) {
           setReport(existingReport);
         } else {
-          const newData = INITIAL_REPORT_DATA(selectedSchoolId);
+          const newData = INITIAL_REPORT_DATA(selectedSchoolId, periodTerm, periodYear, periodMonth, periodWeekId);
           newData.id = reportId;
           setReport(newData);
         }
       });
     }
-  }, [selectedSchoolId]);
+  }, [selectedSchoolId, currentPeriod?.term?.name, currentPeriod?.academicYear?.year, currentPeriod?.month?.name, currentPeriod?.week?.id]);
 
   const calculateCompleteness = useCallback((data: Partial<TermlyReport>): number => {
     let sectionsFilled = 0;
     const totalSections = TABS.length;
     
     if (data.enrolment && Object.values(data.enrolment).some(g => g.m > 0 || g.f > 0)) sectionsFilled++;
-    if (data.attendance?.weeklyTotals && (data.attendance.weeklyTotals.length > 0 || (data.attendance.teacherAttendance && data.attendance.teacherAttendance.length > 0))) sectionsFilled++;
+    if (data.attendance?.learnerDaily && data.attendance.learnerDaily.some(r => r.m > 0 || r.f > 0)) sectionsFilled++;
     if (data.teachers?.summary && data.teachers.summary.length > 0) sectionsFilled++;
     if (data.infrastructure?.classroomsPermanent && data.infrastructure.classroomsPermanent > 0) sectionsFilled++;
     if (data.textbooks?.items && data.textbooks.items.length > 0) sectionsFilled++;
@@ -164,6 +187,7 @@ const DataUpload: React.FC = () => {
     if (data.health && (data.health.beneficiaries! > 0 || data.health.feedingProgramme)) sectionsFilled++;
     if (data.finance?.grantsReceived && data.finance.grantsReceived > 0) sectionsFilled++;
     if (data.specialNeeds?.learners && data.specialNeeds.learners.length > 0) sectionsFilled++;
+    if (data.pslce?.registered && data.pslce.registered > 0) sectionsFilled++;
     
     return sectionsFilled / totalSections;
   }, []);
@@ -171,16 +195,16 @@ const DataUpload: React.FC = () => {
   const handleAutoSave = useCallback(async (currentReport: Partial<TermlyReport>) => {
     if (!currentReport || !currentReport.id) return;
     
-    const updatedReport = {
-      ...currentReport,
-      lastSaved: Date.now(),
-      completeness: calculateCompleteness(currentReport)
-    };
-    
-    await db.termlyReports.put(updatedReport as TermlyReport);
-    setReport(updatedReport);
-    setShowSaveMessage(true);
-    setTimeout(() => setShowSaveMessage(false), 2000);
+    try {
+      const updatedReport = {
+        ...currentReport,
+        lastSaved: Date.now(),
+        completeness: calculateCompleteness(currentReport)
+      };
+      await db.termlyReports.put(updatedReport as TermlyReport);
+    } catch (err) {
+      toast.error('Auto-save failed');
+    }
   }, [calculateCompleteness]);
 
   const handleTabChange = (newTab: string) => {
@@ -190,50 +214,46 @@ const DataUpload: React.FC = () => {
     setActiveTab(newTab);
   };
 
-  const handleSubmit = async () => {
-    if (!report) return;
-    
-    // Final validation check
-    const errors = validateTermlyReport(report);
-    if (errors.some(e => e.type === 'error')) {
-        alert("Cannot commit submission. Please resolve the critical data errors highlighted in the validation panel.");
-        return;
-    }
+  const handleFrequencyChange = (freq: 'daily' | 'monthly' | 'termly' | 'yearly') => {
+    setSelectedFrequency(freq);
+    const firstTab = TABS.find(t => t.frequency === freq);
+    if (firstTab) handleTabChange(firstTab.id);
+  };
 
-    const finalized = {
-      ...report,
-      status: 'Submitted' as const,
-      lastSaved: Date.now()
-    };
-    
-    await db.termlyReports.put(finalized as TermlyReport);
-    setReport(finalized);
+  const [isSaving, setIsSaving] = useState(false);
 
-    // Recalculate Zonal Aggregates
-    const agg = await recalculateZonalAggregates(finalized.term, finalized.year);
-    
-    // Update School Profile & Audit
-    if (selectedSchool) {
-        await db.schools.update(selectedSchool.id!, {
-            updatedAt: Date.now(),
-            infrastructure: {
-                ...selectedSchool.infrastructure,
-                classrooms: finalized.infrastructure?.classroomsPermanent || selectedSchool.infrastructure.classrooms,
-                latrines: (finalized.infrastructure?.toiletsBoys || 0) + (finalized.infrastructure?.toiletsGirls || 0)
-            }
-        });
-        
-        await db.auditLogs.add({
-            schoolId: selectedSchool.id!,
-            action: 'update',
-            content: `Termly data submitted for ${finalized.term} ${finalized.year}. Validation metrics cleared. Schools submitted: ${agg.schoolsSubmitted}/${agg.totalSchools}`,
-            performedBy: 'Administrator',
-            timestamp: Date.now()
-        });
+  const handleSave = async () => {
+    if (!report || isSaving) return;
+    setIsSaving(true);
+    try {
+      const updated = {
+        ...report,
+        lastSaved: Date.now(),
+        completeness: calculateCompleteness(report)
+      };
+      await db.termlyReports.put(updated as TermlyReport);
+      setReport(updated);
+      toast.success('Report saved successfully');
+    } catch (error) {
+      console.error('Failed to save report:', error);
+      toast.error('Save failed. Please try again.');
+    } finally {
+      setIsSaving(false);
     }
   };
 
-  const handleUnlock = async () => {
+  // Debounced autosave whenever report data changes
+  const autosaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => {
+    if (!report || !report.id || report.status === 'Submitted') return;
+    if (autosaveTimerRef.current) clearTimeout(autosaveTimerRef.current);
+    autosaveTimerRef.current = setTimeout(() => {
+      handleAutoSave(report);
+    }, 2000);
+    return () => { if (autosaveTimerRef.current) clearTimeout(autosaveTimerRef.current); };
+  }, [report]);
+
+  const handleLockOpen = async () => {
     if (!report) return;
     const unlocked = { ...report, status: 'Draft' as const };
     await db.termlyReports.put(unlocked as TermlyReport);
@@ -297,7 +317,7 @@ const DataUpload: React.FC = () => {
                   <span className="bg-slate-100 text-slate-700 text-[10px] px-2 py-0.5 rounded border border-slate-200 font-bold tracking-wider leading-none">EMIS: {selectedSchool?.emisCode}</span>
                </div>
                <p className="text-[12px] font-medium text-text-secondary leading-none mt-1">
-                   2024 Academic Year • Term 1 Cycle • <span className={report?.status === 'Submitted' ? 'text-success' : 'text-warning'}>{report?.status} Registry</span>
+                    {currentPeriod ? `${currentPeriod.academicYear.year} Academic Year • ${currentPeriod.term.name} • Week ${currentPeriod.week.weekNumber}` : report ? `${report.year} Academic Year • ${report.term}` : ''} • <span className={report?.status === 'Submitted' ? 'text-success' : 'text-warning'}>{report?.status} Registry</span>
                </p>
             </div>
          </div>
@@ -317,23 +337,23 @@ const DataUpload: React.FC = () => {
                  <p className="text-[11px] font-semibold text-text-primary mt-0.5">{report?.lastSaved ? new Date(report.lastSaved).toLocaleTimeString() : 'N/A'}</p>
              </div>
              {isReadOnly ? (
-                 <button onClick={handleUnlock} className="erp-btn bg-slate-800 text-white hover:bg-slate-700 h-9 px-4 text-[13px] font-medium">
-                     <Unlock size={16} />
+                 <button onClick={handleLockOpen} className="erp-btn bg-slate-800 text-white hover:bg-slate-700 h-9 px-4 text-[13px] font-medium">
+                     <LockOpen size={16} />
                      <span>Reactivate Records</span>
                  </button>
-             ) : (
-                 <div className="flex items-center space-x-4">
-                     {showSaveMessage && (
-                        <span className="text-[11px] font-bold text-success uppercase tracking-widest animate-pulse">
-                            Auto-sync Active
-                        </span>
-                     )}
-                     <button onClick={handleSubmit} className="erp-btn erp-btn-primary h-9 px-6 text-[13px] font-medium shadow-sm">
-                        <CheckCircle2 size={16} />
-                        <span>Commit Submission</span>
-                     </button>
-                 </div>
-             )}
+              ) : (
+                  <div className="flex items-center space-x-4">
+                      {showSaveMessage && (
+                         <span className="text-[11px] font-bold text-success uppercase tracking-widest animate-pulse">
+                             Auto-sync Active
+                         </span>
+                      )}
+                       <button onClick={handleSave} disabled={isSaving} className="erp-btn erp-btn-primary h-9 px-6 text-[13px] font-medium shadow-sm disabled:opacity-50">
+                          <Save size={16} />
+                          <span>{isSaving ? 'Saving...' : 'Save'}</span>
+                       </button>
+                  </div>
+              )}
          </div>
       </div>
 
@@ -343,7 +363,7 @@ const DataUpload: React.FC = () => {
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div className={`p-4 rounded-lg border flex items-start space-x-4 bg-white shadow-sm ${validationResults.some(r => r.type === 'error') ? 'border-error/20' : 'border-warning/20'}`}>
               <div className={`w-10 h-10 rounded flex items-center justify-center shrink-0 ${validationResults.some(r => r.type === 'error') ? 'bg-error text-white' : 'bg-warning text-white'}`}>
-                {validationResults.some(r => r.type === 'error') ? <AlertCircle size={20} /> : <AlertCircle size={20} className="rotate-180" />}
+                {validationResults.some(r => r.type === 'error') ? <CircleAlert size={20} /> : <CircleAlert size={20} className="rotate-180" />}
               </div>
               <div className="flex-1">
                 <div className="flex items-center justify-between">
@@ -373,53 +393,80 @@ const DataUpload: React.FC = () => {
           </div>
         )}
 
-        {/* Horizontal Sticky Module Navigation */}
-        <div className="sticky top-0 z-30 bg-bg-default/80 backdrop-blur-md pt-2 pb-4 -mx-4 px-4 border-b border-border-default/50">
-            <div className="flex items-center space-x-1.5 p-1 bg-gray-100/50 rounded-lg border border-border-default overflow-x-auto no-scrollbar">
-                {TABS.map(tab => (
+        {/* Frequency Top Bar — single row */}
+        <div className="sticky top-0 z-30 bg-bg-default/80 backdrop-blur-md pt-2 pb-4 -mx-4 px-4">
+          <div className="flex items-center gap-1 p-1 bg-gray-100/70 rounded-lg border border-border-default w-fit ml-auto">
+            {(['daily', 'monthly', 'termly', 'yearly'] as const).map(freq => {
+              const freqColors = {
+                daily: { active: 'bg-emerald-600 text-white shadow-sm', inactive: 'text-emerald-700 hover:bg-emerald-50' },
+                monthly: { active: 'bg-amber-600 text-white shadow-sm', inactive: 'text-amber-700 hover:bg-amber-50' },
+                termly: { active: 'bg-blue-600 text-white shadow-sm', inactive: 'text-blue-700 hover:bg-blue-50' },
+                yearly: { active: 'bg-purple-600 text-white shadow-sm', inactive: 'text-purple-700 hover:bg-purple-50' }
+              };
+              const c = freqColors[freq];
+              return (
+                <button
+                  key={freq}
+                  onClick={() => handleFrequencyChange(freq)}
+                  className={`px-6 py-1.5 rounded-md text-[12px] font-bold uppercase tracking-wider transition-all ${
+                    selectedFrequency === freq ? c.active : c.inactive
+                  }`}
+                >
+                  {freq}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* Horizontal Tab Bar — tabs for selected frequency */}
+        <div className="flex items-center gap-1 p-1 bg-gray-100/50 rounded-lg border border-border-default w-fit">
+            {TABS.filter(t => t.frequency === selectedFrequency).map(tab => {
+                const freqColors = {
+                    daily: { active: 'bg-emerald-600 text-white shadow-sm', inactive: 'text-emerald-700 hover:bg-emerald-50' },
+                    monthly: { active: 'bg-amber-600 text-white shadow-sm', inactive: 'text-amber-700 hover:bg-amber-50' },
+                    termly: { active: 'bg-blue-600 text-white shadow-sm', inactive: 'text-blue-700 hover:bg-blue-50' },
+                    yearly: { active: 'bg-purple-600 text-white shadow-sm', inactive: 'text-purple-700 hover:bg-purple-50' }
+                };
+                const c = freqColors[selectedFrequency];
+                return (
                     <button
                         key={tab.id}
                         onClick={() => handleTabChange(tab.id)}
-                        className={`flex items-center space-x-2 px-4 py-2 rounded-md text-[12px] font-semibold transition-all whitespace-nowrap ${
-                            activeTab === tab.id 
-                                ? 'bg-white text-primary-default shadow-sm border border-border-default/50' 
-                                : 'text-text-secondary hover:text-text-primary hover:bg-gray-200/50'
+                        className={`flex items-center gap-2 px-4 py-2 rounded-md text-[12px] font-bold transition-all ${
+                            activeTab === tab.id ? c.active : c.inactive
                         }`}
                     >
                         <tab.icon size={14} />
                         <span>{tab.label}</span>
                     </button>
-                ))}
-            </div>
+                );
+            })}
         </div>
 
-        {/* Main Content Area */}
-        <div className="erp-card relative min-h-[500px] bg-white shadow-sm border border-border-default">
-            {isReadOnly && (
-                <div className="absolute inset-0 bg-white/60 backdrop-blur-[1px] z-10 flex items-center justify-center rounded-lg">
-                    <div className="bg-slate-900 text-white px-8 py-4 rounded-lg flex items-center space-x-3 shadow-xl border border-white/10">
-                        <Lock size={20} className="text-warning" />
-                        <div>
-                            <p className="text-[13px] font-bold tracking-tight leading-none uppercase tracking-wide">Record Canonicalized</p>
-                            <p className="text-[10px] uppercase tracking-widest opacity-60 mt-1.5 font-semibold">Locked for quality assurance protocols</p>
-                        </div>
-                    </div>
-                </div>
-            )}
-            
+        {/* Content — full width */}
+        <div className="erp-card bg-white shadow-sm border border-border-default min-h-[500px]">
             <div className="p-8">
                 <div className="flex items-center space-x-4 mb-8 pb-6 border-b border-gray-100">
                     <div className="w-12 h-12 bg-slate-50 border border-border-default rounded flex items-center justify-center text-primary-default shadow-inner">
                         {React.createElement(TABS.find(t => t.id === activeTab)?.icon || Users, { size: 24 })}
                     </div>
                     <div>
-                        <h2 className="text-[20px] font-bold text-text-primary tracking-tight leading-none">{TABS.find(t => t.id === activeTab)?.label}</h2>
+                        <div className="flex items-center gap-3">
+                          <h2 className="text-[20px] font-bold text-text-primary tracking-tight leading-none">{TABS.find(t => t.id === activeTab)?.label}</h2>
+                          <span className={`text-[9px] font-bold uppercase tracking-widest px-2 py-0.5 rounded ${
+                            TABS.find(t => t.id === activeTab)?.frequency === 'daily' ? 'bg-emerald-100 text-emerald-700' :
+                            TABS.find(t => t.id === activeTab)?.frequency === 'monthly' ? 'bg-amber-100 text-amber-700' :
+                            TABS.find(t => t.id === activeTab)?.frequency === 'termly' ? 'bg-blue-100 text-blue-700' :
+                            'bg-purple-100 text-purple-700'
+                          }`}>{TABS.find(t => t.id === activeTab)?.frequency}</span>
+                        </div>
                         <p className="text-[11px] font-semibold text-text-secondary uppercase tracking-widest opacity-60 mt-2">Institutional sync context v2.4</p>
                     </div>
                 </div>
                 
                 {report ? (
-                    <TabContent activeTab={activeTab} report={report} setReport={setReport} />
+                    <TabContent activeTab={activeTab} report={report} setReport={setReport} schoolId={selectedSchoolId} />
                 ) : (
                     <div className="flex flex-col items-center justify-center py-20 text-center space-y-4">
                         <div className="w-12 h-12 border-2 border-primary-default border-t-transparent rounded-full animate-spin"></div>
@@ -435,7 +482,7 @@ const DataUpload: React.FC = () => {
 
 
 
-const TabContent: React.FC<{ activeTab: string, report: Partial<TermlyReport>, setReport: (d: Partial<TermlyReport>) => void }> = ({ activeTab, report, setReport }) => {
+const TabContent: React.FC<{ activeTab: string, report: Partial<TermlyReport>, setReport: (d: Partial<TermlyReport>) => void, schoolId: number | null }> = ({ activeTab, report, setReport, schoolId }) => {
     const totalEnrolment = Object.values(report.enrolment || {}).reduce<number>((acc, curr) => {
         const item = curr as { m: number, f: number };
         return acc + (Number(item.m) || 0) + (Number(item.f) || 0);
@@ -486,7 +533,7 @@ const TabContent: React.FC<{ activeTab: string, report: Partial<TermlyReport>, s
                     case 'enrolment':
                         return <EnrolmentSection report={report} setReport={setReport} />;
                     case 'attendance':
-                        return <AttendanceSection report={report} setReport={setReport} />;
+                        return <AttendanceSection report={report} setReport={setReport} schoolId={schoolId} />;
                     case 'teachers':
                         return <TeachersSection report={report} setReport={setReport} />;
                     case 'infrastructure':
@@ -497,15 +544,25 @@ const TabContent: React.FC<{ activeTab: string, report: Partial<TermlyReport>, s
                         return <ExamsSection report={report} setReport={setReport} />;
                     case 'health':
                         return <HealthSection report={report} setReport={setReport} />;
+                    case 'ifa':
+                        return <IFASection report={report} setReport={setReport} />;
                     case 'finance':
                         return <FinanceSection report={report} setReport={setReport} />;
                     case 'specialNeeds':
                         return <SpecialNeedsSection report={report} setReport={setReport} />;
+                    case 'pslce':
+                        return <PSLCESection report={report} setReport={setReport} />;
+                    case 'infrastructureRegistry':
+                        return <RecordsRegistry type="infrastructure" />;
+                    case 'materialsRegistry':
+                        return <RecordsRegistry type="materials" />;
+                    case 'financeRegistry':
+                        return <RecordsRegistry type="finance" />;
                     default:
                         return (
                             <div className="flex flex-col items-center justify-center py-20 text-center space-y-6">
                                 <div className="w-20 h-20 bg-slate-50 rounded-2xl flex items-center justify-center text-slate-200 border border-slate-100 shadow-inner">
-                                    <AlertCircle size={40} />
+                                    <CircleAlert size={40} />
                                 </div>
                                 <div className="space-y-2">
                                     <h4 className="text-lg font-bold text-slate-800">Section Under Integration</h4>
@@ -519,155 +576,327 @@ const TabContent: React.FC<{ activeTab: string, report: Partial<TermlyReport>, s
     );
 }
 
-const AttendanceSection = ({ report, setReport }: { report: Partial<TermlyReport>, setReport: (d: Partial<TermlyReport>) => void }) => {
+const AttendanceSection = ({ report, setReport, schoolId }: { report: Partial<TermlyReport>, setReport: (d: Partial<TermlyReport>) => void, schoolId: number | null }) => {
   const grades = useMemo(() => ['Standard 1', 'Standard 2', 'Standard 3', 'Standard 4', 'Standard 5', 'Standard 6', 'Standard 7', 'Standard 8'], []);
-    
-    // Initialize if empty
-    useEffect(() => {
-        const needsLearner = !report.attendance?.weeklyTotals || report.attendance.weeklyTotals.length === 0;
-        const needsTeacher = !report.attendance?.teacherAttendance || report.attendance.teacherAttendance.length === 0;
-        
-        if (needsLearner || needsTeacher) {
-            setReport({
-                ...report,
-                attendance: { 
-                    weeklyTotals: needsLearner ? grades.map(g => ({ grade: g, m: 0, f: 0 })) : (report.attendance?.weeklyTotals || []),
-                    teacherAttendance: needsTeacher ? [{ m: 0, f: 0, present: 0, total: 0 }] : (report.attendance?.teacherAttendance || [])
-                }
-            });
+  const days = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'];
+  const allTeachers = useLiveQuery(() => schoolId ? db.teachers.where('schoolId').equals(schoolId).toArray() : Promise.resolve([]), [schoolId]) || [];
+  const statusOptions = ['present', 'absent', 'sick', 'excused'] as const;
+
+  useEffect(() => {
+    const needsLearner = !report.attendance?.learnerDaily || report.attendance.learnerDaily.length === 0;
+    const needsTeacherDaily = !report.attendance?.teacherDaily || report.attendance.teacherDaily.length === 0;
+
+    if (allTeachers.length > 0 && (needsLearner || needsTeacherDaily)) {
+      const teacherDaily = needsTeacherDaily
+        ? days.map(d => allTeachers.map(t => ({ day: d, teacherId: t.id!, name: t.fullName, gender: t.gender, status: 'present' as const }))).flat()
+        : (report.attendance?.teacherDaily || []);
+
+      const teacherAttendance = days.map(d => {
+        const dayRecords = teacherDaily.filter(r => r.day === d);
+        const m = dayRecords.filter(r => r.gender === 'M' && r.status === 'present').length;
+        const f = dayRecords.filter(r => r.gender === 'F' && r.status === 'present').length;
+        return { day: d, m, f, present: m + f, total: dayRecords.length };
+      });
+
+      setReport({
+        ...report,
+        attendance: {
+          weeklyTotals: report.attendance?.weeklyTotals || grades.map(g => ({ grade: g, m: 0, f: 0 })),
+          teacherAttendance,
+          teacherDaily,
+          learnerDaily: needsLearner ? days.map(d => grades.map(g => ({ day: d, grade: g, m: 0, f: 0 }))).flat() : (report.attendance?.learnerDaily || [])
         }
-    }, [report, setReport, grades]); 
+      });
+    }
+  }, [report, setReport, grades, allTeachers.length]);
 
-    const updateGrade = (idx: number, field: 'm' | 'f', value: number) => {
-        const next = [...(report.attendance?.weeklyTotals || [])];
-        next[idx] = { ...next[idx], [field]: value };
-        setReport({ ...report, attendance: { ...report.attendance!, weeklyTotals: next } });
-    };
+  const getLearnerDayGrade = (day: string, grade: string) => {
+    return (report.attendance?.learnerDaily || []).find(r => r.day === day && r.grade === grade);
+  };
 
-    const updateTeacher = (field: 'm' | 'f' | 'present' | 'total', value: number) => {
-        const next = [...(report.attendance?.teacherAttendance || [{ m: 0, f: 0, present: 0, total: 0 }])];
-        next[0] = { ...next[0], [field]: value };
-        setReport({ ...report, attendance: { ...report.attendance!, teacherAttendance: next } });
-    };
+  const updateLearnerDayGrade = (day: string, grade: string, field: 'm' | 'f', value: number) => {
+    const next = [...(report.attendance?.learnerDaily || [])];
+    const idx = next.findIndex(r => r.day === day && r.grade === grade);
+    if (idx !== -1) {
+      next[idx] = { ...next[idx], [field]: value };
+      setReport({ ...report, attendance: { ...report.attendance!, learnerDaily: next } });
+    }
+  };
 
-    const syncWithEnrolment = () => {
-        if (!report.enrolment) return;
-        const enrolmentGrades = ['grade1', 'grade2', 'grade3', 'grade4', 'grade5', 'grade6', 'grade7', 'grade8'];
-        const gradesMapping = ['Standard 1', 'Standard 2', 'Standard 3', 'Standard 4', 'Standard 5', 'Standard 6', 'Standard 7', 'Standard 8'];
-        
-        const attendanceSync = gradesMapping.map((label, idx) => {
-            const eKey = enrolmentGrades[idx] as keyof NonNullable<TermlyReport['enrolment']>;
-            const eData = report.enrolment?.[eKey] as { m: number; f: number } | undefined;
-            return {
-                grade: label,
-                m: eData?.m || 0,
-                f: eData?.f || 0
-            };
-        });
+  const updateTeacherStatus = (day: string, teacherId: number, status: string) => {
+    const nextDaily = [...(report.attendance?.teacherDaily || [])];
+    const idx = nextDaily.findIndex(r => r.day === day && r.teacherId === teacherId);
+    if (idx !== -1) {
+      nextDaily[idx] = { ...nextDaily[idx], status: status as any };
+      const teacherAttendance = days.map(d => {
+        const dayRecords = nextDaily.filter(r => r.day === d);
+        const m = dayRecords.filter(r => r.gender === 'M' && r.status === 'present').length;
+        const f = dayRecords.filter(r => r.gender === 'F' && r.status === 'present').length;
+        return { day: d, m, f, present: m + f, total: dayRecords.length };
+      });
+      setReport({ ...report, attendance: { ...report.attendance!, teacherDaily: nextDaily, teacherAttendance } });
+    }
+  };
 
-        setReport({
-            ...report,
-            attendance: {
-                ...report.attendance!,
-                weeklyTotals: attendanceSync
-            }
-        });
-    };
+  const syncWithEnrolment = () => {
+    if (!report.enrolment) return;
+    const enrolmentGrades = ['grade1', 'grade2', 'grade3', 'grade4', 'grade5', 'grade6', 'grade7', 'grade8'];
+    const gradesMapping = ['Standard 1', 'Standard 2', 'Standard 3', 'Standard 4', 'Standard 5', 'Standard 6', 'Standard 7', 'Standard 8'];
 
-    return (
-        <div className="space-y-8">
-            <div className="flex items-center justify-between p-3 bg-primary-default/[0.02] border border-primary-default/10 rounded">
-                <p className="text-[13px] font-medium text-text-secondary leading-relaxed max-w-2xl">Capture average weekly attendance totals. Data is synchronized with digital attendance registers for verified auditing.</p>
-                <button 
-                  onClick={syncWithEnrolment}
-                  className="erp-btn bg-white border border-border-default text-text-primary h-8 px-3 text-[11px] font-bold uppercase hover:bg-gray-50 shrink-0"
-                >
-                    <Clock size={14} />
-                    <span>Sync 100% Attendance</span>
-                </button>
-            </div>
-            
-            {/* Learner Attendance Section */}
-            <div className="space-y-4">
-                <h3 className="text-[14px] font-bold text-text-primary px-3 border-l-4 border-primary-default uppercase tracking-tight">Learner Attendance Matrix</h3>
-                <div className="overflow-hidden border border-border-default rounded">
-                    <table className="w-full">
-                        <thead>
-                            <tr className="bg-gray-50 border-b border-border-default">
-                                <th className="erp-table-header px-6 py-3">Academic Level</th>
-                                <th className="erp-table-header px-6 py-3 text-center">Male Attendance</th>
-                                <th className="erp-table-header px-6 py-3 text-center">Female Attendance</th>
-                            </tr>
-                        </thead>
-                        <tbody className="divide-y divide-gray-100 italic-none">
-                            {(report.attendance?.weeklyTotals || []).map((row, idx) => (
-                                <tr key={idx} className="erp-table-row hover:bg-gray-50/50">
-                                    <td className="erp-table-cell px-6 py-3 font-semibold text-text-primary">{row.grade}</td>
-                                    <td className="erp-table-cell px-6 py-3 text-center">
-                                        <input type="number" value={row.m} onChange={e => updateGrade(idx, 'm', Number(e.target.value))} className="w-20 erp-input text-center h-9" />
-                                    </td>
-                                    <td className="erp-table-cell px-6 py-3 text-center">
-                                        <input type="number" value={row.f} onChange={e => updateGrade(idx, 'f', Number(e.target.value))} className="w-20 erp-input text-center h-9" />
-                                    </td>
-                                </tr>
-                            ))}
-                        </tbody>
-                    </table>
-                </div>
-            </div>
+    const next = [...(report.attendance?.learnerDaily || [])];
+    days.forEach(day => {
+      gradesMapping.forEach((label, idx) => {
+        const eKey = enrolmentGrades[idx] as keyof NonNullable<TermlyReport['enrolment']>;
+        const eData = report.enrolment?.[eKey] as { m: number; f: number } | undefined;
+        const record = next.find(r => r.day === day && r.grade === label);
+        if (record) {
+          record.m = eData?.m || 0;
+          record.f = eData?.f || 0;
+        }
+      });
+    });
 
-            {/* Teacher Attendance Section */}
-            <div className="space-y-4 pt-4 border-t border-gray-100">
-                <h3 className="text-[14px] font-bold text-text-primary px-3 border-l-4 border-slate-900 uppercase tracking-tight">Teacher Attendance Registry</h3>
-                <div className="p-6 bg-slate-50 border border-border-default rounded-lg">
-                    <div className="grid grid-cols-2 md:grid-cols-4 gap-6">
-                        <div className="space-y-1.5">
-                            <label className="text-[11px] font-bold text-text-secondary uppercase tracking-widest">Male (Present)</label>
-                            <input 
-                                type="number" 
-                                value={report.attendance?.teacherAttendance?.[0]?.m || 0} 
-                                onChange={e => updateTeacher('m', Number(e.target.value))}
-                                className="w-full erp-input h-10 text-center font-bold" 
-                            />
-                        </div>
-                        <div className="space-y-1.5">
-                            <label className="text-[11px] font-bold text-text-secondary uppercase tracking-widest">Female (Present)</label>
-                            <input 
-                                type="number" 
-                                value={report.attendance?.teacherAttendance?.[0]?.f || 0} 
-                                onChange={e => updateTeacher('f', Number(e.target.value))}
-                                className="w-full erp-input h-10 text-center font-bold" 
-                            />
-                        </div>
-                        <div className="space-y-1.5">
-                            <label className="text-[11px] font-bold text-text-secondary uppercase tracking-widest">Total Present</label>
-                            <div className="w-full erp-input h-10 bg-white/50 flex items-center justify-center font-bold text-primary-default">
-                                {(report.attendance?.teacherAttendance?.[0]?.m || 0) + (report.attendance?.teacherAttendance?.[0]?.f || 0)}
-                            </div>
-                        </div>
-                        <div className="space-y-1.5">
-                            <label className="text-[11px] font-bold text-text-secondary uppercase tracking-widest">Establishment Total</label>
-                            <input 
-                                type="number" 
-                                value={report.attendance?.teacherAttendance?.[0]?.total || 0} 
-                                onChange={e => updateTeacher('total', Number(e.target.value))}
-                                className="w-full erp-input h-10 text-center font-bold" 
-                            />
-                        </div>
-                    </div>
-                    <div className="mt-4 pt-4 border-t border-gray-200 flex items-center justify-between">
-                        <p className="text-[12px] text-text-secondary font-medium italic">Note: Verification against biometric logs or manual registers is mandatory.</p>
-                        <div className="flex items-center space-x-2">
-                            <span className="text-[11px] font-bold text-text-secondary uppercase">Attendance Rate:</span>
-                            <span className={`text-[13px] font-bold ${((((report.attendance?.teacherAttendance?.[0]?.m || 0) + (report.attendance?.teacherAttendance?.[0]?.f || 0)) / (report.attendance?.teacherAttendance?.[0]?.total || 1)) * 100) < 75 ? 'text-error' : 'text-success'}`}>
-                                {report.attendance?.teacherAttendance?.[0]?.total ? Math.round((((report.attendance?.teacherAttendance?.[0]?.m || 0) + (report.attendance?.teacherAttendance?.[0]?.f || 0)) / report.attendance?.teacherAttendance?.[0]?.total) * 100) : 0}%
-                            </span>
-                        </div>
-                    </div>
-                </div>
-            </div>
+    setReport({ ...report, attendance: { ...report.attendance!, learnerDaily: next } });
+  };
+
+  const gradeTotal = (grade: string, field: 'm' | 'f') => {
+    return (report.attendance?.learnerDaily || []).filter(r => r.grade === grade).reduce((a, r) => a + r[field], 0);
+  };
+
+  const dayTotal = (day: string, field: 'm' | 'f') => {
+    return (report.attendance?.learnerDaily || []).filter(r => r.day === day).reduce((a, r) => a + r[field], 0);
+  };
+
+  const grandTotal = (field: 'm' | 'f') => {
+    return (report.attendance?.learnerDaily || []).reduce((a, r) => a + r[field], 0);
+  };
+
+  const teacherDailyTotals = {
+    present: (day: string) => (report.attendance?.teacherDaily || []).filter(r => r.day === day && r.status === 'present').length,
+    absent: (day: string) => (report.attendance?.teacherDaily || []).filter(r => r.day === day && r.status === 'absent').length,
+    sick: (day: string) => (report.attendance?.teacherDaily || []).filter(r => r.day === day && r.status === 'sick').length,
+    excused: (day: string) => (report.attendance?.teacherDaily || []).filter(r => r.day === day && r.status === 'excused').length,
+  };
+
+  return (
+    <div className="space-y-8">
+      <div className="flex items-center justify-between p-3 bg-primary-default/[0.02] border border-primary-default/10 rounded">
+        <p className="text-[13px] font-medium text-text-secondary leading-relaxed max-w-2xl">Capture average weekly attendance totals. Data is synchronized with digital attendance registers for verified auditing.</p>
+        <button
+          onClick={syncWithEnrolment}
+          className="erp-btn bg-white border border-border-default text-text-primary h-8 px-3 text-[11px] font-bold uppercase hover:bg-gray-50 shrink-0"
+        >
+          <Clock size={14} />
+          <span>Sync 100% Attendance</span>
+        </button>
+      </div>
+
+      {/* Learner Attendance Daily Matrix */}
+      <div className="space-y-4">
+        <h3 className="text-[14px] font-bold text-text-primary px-3 border-l-4 border-primary-default uppercase tracking-tight">Learner Daily Attendance Matrix</h3>
+        <div className="overflow-x-auto border border-border-default rounded">
+          <table className="w-full text-[11px] min-w-[900px]">
+            <thead>
+              <tr className="bg-emerald-50 border-b-2 border-emerald-200">
+                <th className="px-3 py-2 border border-emerald-200 bg-emerald-100 font-bold text-[10px] text-left" rowSpan={2}>Grade</th>
+                <th className="px-3 py-2 border border-emerald-200 bg-emerald-100 font-bold text-[10px] text-center" colSpan={2}>WEEK TOTAL</th>
+                <th className="px-3 py-2 border border-emerald-200 bg-emerald-100 font-bold text-[10px] text-center" colSpan={2}>MONDAY</th>
+                <th className="px-3 py-2 border border-emerald-200 bg-emerald-100 font-bold text-[10px] text-center" colSpan={2}>TUESDAY</th>
+                <th className="px-3 py-2 border border-emerald-200 bg-emerald-100 font-bold text-[10px] text-center" colSpan={2}>WEDNESDAY</th>
+                <th className="px-3 py-2 border border-emerald-200 bg-emerald-100 font-bold text-[10px] text-center" colSpan={2}>THURSDAY</th>
+                <th className="px-3 py-2 border border-emerald-200 bg-emerald-100 font-bold text-[10px] text-center" colSpan={2}>FRIDAY</th>
+              </tr>
+              <tr className="bg-emerald-50 border-b-2 border-emerald-200">
+                <th className="px-2 py-1.5 border border-emerald-200 bg-emerald-50 font-bold text-[10px]">M</th>
+                <th className="px-2 py-1.5 border border-emerald-200 bg-emerald-50 font-bold text-[10px]">F</th>
+                {days.map(d => (
+                  <React.Fragment key={d}>
+                    <th className="px-2 py-1.5 border border-emerald-200 bg-emerald-50 font-bold text-[10px]">M</th>
+                    <th className="px-2 py-1.5 border border-emerald-200 bg-emerald-50 font-bold text-[10px]">F</th>
+                  </React.Fragment>
+                ))}
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-100">
+              {grades.map(g => (
+                <tr key={g} className="hover:bg-gray-50/50">
+                  <td className="px-3 py-1.5 border border-gray-200 font-semibold text-text-primary">{g}</td>
+                  <td className="px-2 py-1.5 border border-gray-200 text-center">
+                    <input type="number" value={gradeTotal(g, 'm')} readOnly className="w-14 erp-input text-center h-7 text-[11px] font-bold bg-gray-100" />
+                  </td>
+                  <td className="px-2 py-1.5 border border-gray-200 text-center">
+                    <input type="number" value={gradeTotal(g, 'f')} readOnly className="w-14 erp-input text-center h-7 text-[11px] font-bold bg-gray-100" />
+                  </td>
+                  {days.map(d => {
+                    const r = getLearnerDayGrade(d, g);
+                    return (
+                      <React.Fragment key={`${d}-${g}`}>
+                        <td className="px-2 py-1.5 border border-gray-200 text-center">
+                          <input type="number" value={r?.m || 0} onChange={e => updateLearnerDayGrade(d, g, 'm', Number(e.target.value))} className="w-14 erp-input text-center h-7 text-[11px]" />
+                        </td>
+                        <td className="px-2 py-1.5 border border-gray-200 text-center">
+                          <input type="number" value={r?.f || 0} onChange={e => updateLearnerDayGrade(d, g, 'f', Number(e.target.value))} className="w-14 erp-input text-center h-7 text-[11px]" />
+                        </td>
+                      </React.Fragment>
+                    );
+                  })}
+                </tr>
+              ))}
+              <tr className="bg-emerald-50/50 font-bold">
+                <td className="px-3 py-2 border border-gray-200 text-text-primary">GRAND TOTAL</td>
+                <td className="px-2 py-2 border border-gray-200 text-center">
+                  <input type="number" value={grandTotal('m')} readOnly className="w-14 erp-input text-center h-7 text-[11px] font-bold bg-emerald-100" />
+                </td>
+                <td className="px-2 py-2 border border-gray-200 text-center">
+                  <input type="number" value={grandTotal('f')} readOnly className="w-14 erp-input text-center h-7 text-[11px] font-bold bg-emerald-100" />
+                </td>
+                {days.map(d => (
+                  <React.Fragment key={`total-${d}`}>
+                    <td className="px-2 py-2 border border-gray-200 text-center">
+                      <input type="number" value={dayTotal(d, 'm')} readOnly className="w-14 erp-input text-center h-7 text-[11px] font-bold bg-emerald-100" />
+                    </td>
+                    <td className="px-2 py-2 border border-gray-200 text-center">
+                      <input type="number" value={dayTotal(d, 'f')} readOnly className="w-14 erp-input text-center h-7 text-[11px] font-bold bg-emerald-100" />
+                    </td>
+                  </React.Fragment>
+                ))}
+              </tr>
+            </tbody>
+          </table>
         </div>
-    );
+      </div>
+
+      {/* Teacher Daily Attendance — per-teacher matrix */}
+      <div className="space-y-4 pt-4 border-t border-gray-100">
+        <div className="flex items-center justify-between">
+          <h3 className="text-[14px] font-bold text-text-primary px-3 border-l-4 border-slate-900 uppercase tracking-tight">Teacher Daily Attendance</h3>
+          <div className="flex items-center gap-4 text-[11px] font-medium text-text-secondary">
+            <span><span className="inline-block w-2 h-2 rounded-full bg-emerald-500 mr-1"></span>Present</span>
+            <span><span className="inline-block w-2 h-2 rounded-full bg-red-400 mr-1"></span>Absent</span>
+            <span><span className="inline-block w-2 h-2 rounded-full bg-amber-400 mr-1"></span>Sick</span>
+            <span><span className="inline-block w-2 h-2 rounded-full bg-gray-400 mr-1"></span>Excused</span>
+          </div>
+        </div>
+        <div className="overflow-x-auto border border-border-default rounded">
+          <table className="w-full text-[11px] min-w-[700px]">
+            <thead>
+              <tr className="bg-amber-50 border-b-2 border-amber-200">
+                <th className="px-3 py-2 border border-amber-200 bg-amber-100 font-bold text-[10px] text-left">Teacher</th>
+                <th className="px-3 py-2 border border-amber-200 bg-amber-100 font-bold text-[10px] text-center">Gender</th>
+                <th className="px-3 py-2 border border-amber-200 bg-amber-100 font-bold text-[10px] text-center" colSpan={2}>WEEK</th>
+                {days.map(d => (
+                  <th key={d} className="px-3 py-2 border border-amber-200 bg-amber-100 font-bold text-[10px] text-center">{d.substring(0, 3)}</th>
+                ))}
+              </tr>
+              <tr className="bg-amber-50 border-b-2 border-amber-200">
+                <th className="px-3 py-1 border border-amber-200 bg-amber-50"></th>
+                <th className="px-3 py-1 border border-amber-200 bg-amber-50"></th>
+                <th className="px-2 py-1 border border-amber-200 bg-amber-50 font-bold text-[10px] text-center">P</th>
+                <th className="px-2 py-1 border border-amber-200 bg-amber-50 font-bold text-[10px] text-center">%</th>
+                {days.map(d => (
+                  <th key={d} className="px-2 py-1 border border-amber-200 bg-amber-50 font-bold text-[10px] text-center">Status</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-100">
+              {allTeachers.map(t => {
+                const teacherDays = (report.attendance?.teacherDaily || []).filter(r => r.teacherId === t.id);
+                const presentDays = teacherDays.filter(r => r.status === 'present').length;
+                const weekPct = days.length > 0 ? Math.round((presentDays / days.length) * 100) : 0;
+                return (
+                  <tr key={t.id} className="hover:bg-gray-50/50">
+                    <td className="px-3 py-1.5 border border-gray-200 font-semibold text-text-primary">{t.fullName}</td>
+                    <td className="px-3 py-1.5 border border-gray-200 text-center text-text-secondary">{t.gender}</td>
+                    <td className="px-2 py-1.5 border border-gray-200 text-center">
+                      <span className="font-bold text-emerald-600">{presentDays}</span>
+                      <span className="text-text-secondary">/{days.length}</span>
+                    </td>
+                    <td className="px-2 py-1.5 border border-gray-200 text-center">
+                      <span className={`font-bold ${weekPct >= 80 ? 'text-emerald-600' : weekPct >= 50 ? 'text-amber-600' : 'text-red-500'}`}>{weekPct}%</span>
+                    </td>
+                    {days.map(d => {
+                      const r = (report.attendance?.teacherDaily || []).find(rd => rd.day === d && rd.teacherId === t.id);
+                      const currentStatus = r?.status || 'present';
+                      const statusColors = {
+                        present: 'bg-emerald-100 text-emerald-800 border-emerald-300',
+                        absent: 'bg-red-100 text-red-800 border-red-300',
+                        sick: 'bg-amber-100 text-amber-800 border-amber-300',
+                        excused: 'bg-gray-100 text-gray-600 border-gray-300'
+                      };
+                      return (
+                        <td key={d} className="px-2 py-1.5 border border-gray-200 text-center">
+                          <select
+                            value={currentStatus}
+                            onChange={e => updateTeacherStatus(d, t.id!, e.target.value)}
+                            className={`erp-input h-7 text-[10px] font-bold w-20 text-center border rounded ${statusColors[currentStatus as keyof typeof statusColors]}`}
+                          >
+                            <option value="present">Present</option>
+                            <option value="absent">Absent</option>
+                            <option value="sick">Sick</option>
+                            <option value="excused">Excused</option>
+                          </select>
+                        </td>
+                      );
+                    })}
+                  </tr>
+                );
+              })}
+            </tbody>
+            <tfoot>
+              <tr className="bg-amber-50/70 font-bold">
+                <td className="px-3 py-2 border border-gray-200 text-text-primary">DAY TOTALS</td>
+                <td className="px-3 py-2 border border-gray-200"></td>
+                <td className="px-2 py-2 border border-gray-200 text-center text-emerald-600" colSpan={2}>
+                  {days.reduce((a, d) => a + teacherDailyTotals.present(d), 0)}/{allTeachers.length * days.length}
+                </td>
+                {days.map(d => {
+                  const dayM = (report.attendance?.teacherDaily || []).filter(r => r.day === d && r.gender === 'M' && r.status === 'present').length;
+                  const dayF = (report.attendance?.teacherDaily || []).filter(r => r.day === d && r.gender === 'F' && r.status === 'present').length;
+                  const dayPresent = dayM + dayF;
+                  const dayTotal = allTeachers.length;
+                  return (
+                    <td key={d} className="px-2 py-2 border border-gray-200 text-center">
+                      <div className="flex flex-col items-center leading-tight">
+                        <span className="text-emerald-600">{dayPresent}</span>
+                        <span className="text-[9px] text-text-secondary">/ {dayTotal}</span>
+                        <span className="text-[9px] text-text-secondary">({dayTotal > 0 ? Math.round(dayPresent / dayTotal * 100) : 0}%)</span>
+                      </div>
+                    </td>
+                  );
+                })}
+              </tr>
+            </tfoot>
+          </table>
+        </div>
+
+        {/* Summary bar */}
+        <div className="flex items-center justify-between p-3 bg-amber-50/50 border border-amber-200 rounded">
+          <div className="flex items-center gap-6 text-[11px] font-medium text-text-secondary">
+            <span>👤 <strong>{allTeachers.length}</strong> teachers</span>
+            {days.map(d => (
+              <span key={d} className="flex items-center gap-1">
+                <span className="font-bold text-text-primary">{d.substring(0, 3)}:</span>
+                <span className="text-emerald-600 font-bold">{teacherDailyTotals.present(d)}</span> P,
+                <span className="text-red-400">{teacherDailyTotals.absent(d)}</span> A,
+                <span className="text-amber-500">{teacherDailyTotals.sick(d)}</span> S,
+                <span className="text-gray-400">{teacherDailyTotals.excused(d)}</span> E
+              </span>
+            ))}
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="text-[11px] font-bold text-text-secondary uppercase">Weekly Avg:</span>
+            <span className="text-[14px] font-bold text-success">
+              {(() => {
+                const totalPresent = days.reduce((a, d) => a + teacherDailyTotals.present(d), 0);
+                const totalExpected = allTeachers.length * days.length;
+                return totalExpected > 0 ? Math.round((totalPresent / totalExpected) * 100) : 0;
+              })()}%
+            </span>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
 };
 
 const TeachersSection = ({ report, setReport }: { report: Partial<TermlyReport>, setReport: (d: Partial<TermlyReport>) => void }) => {
@@ -734,7 +963,7 @@ const TeachersSection = ({ report, setReport }: { report: Partial<TermlyReport>,
                                 }}
                                 className="w-9 h-9 rounded flex items-center justify-center text-text-secondary hover:bg-error/10 hover:text-error transition-all"
                             >
-                                <AlertCircle size={16} />
+                                <CircleAlert size={16} />
                             </button>
                         </div>
                     ))
@@ -1003,7 +1232,7 @@ const EnrolmentSection = ({ report, setReport }: { report: Partial<TermlyReport>
                         <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-1">Grand Total</p>
                         <p className="text-[18px] font-bold leading-none">{totalEnrolment.toLocaleString()}</p>
                     </div>
-                    <CheckCircle2 size={20} className="text-success" />
+                    <CircleCheck size={20} className="text-success" />
                 </div>
             </div>
 
@@ -1205,6 +1434,120 @@ const HealthSection = ({ report, setReport }: { report: Partial<TermlyReport>, s
     </div>
 );
 
+const IFASection = ({ report, setReport }: { report: Partial<TermlyReport>, setReport: (d: Partial<TermlyReport>) => void }) => {
+  const observations = report.ifa?.observations || [];
+  const subjects = ['English', 'Mathematics', 'Science', 'Social Studies', 'Chichewa', 'Life Skills', 'Agriculture'];
+
+  const addObservation = () => {
+    const next = [...observations, { teacherName: '', grade: 'Standard 1', subject: subjects[0], lessonPlanChecked: false, qualityScore: 3, dateObserved: new Date().toISOString().split('T')[0], notes: '' }];
+    setReport({ ...report, ifa: { observations: next } });
+  };
+
+  const updateObservation = (idx: number, field: string, value: any) => {
+    const next = [...observations];
+    (next[idx] as any)[field] = value;
+    setReport({ ...report, ifa: { observations: next } });
+  };
+
+  const removeObservation = (idx: number) => {
+    const next = observations.filter((_, i) => i !== idx);
+    setReport({ ...report, ifa: { observations: next } });
+  };
+
+  return (
+    <div className="space-y-8">
+      <div className="flex items-center justify-between p-3 bg-primary-default/[0.02] border border-primary-default/10 rounded">
+        <p className="text-[13px] font-medium text-text-secondary leading-relaxed max-w-2xl">
+          Instructional Functional Analysis (IFA): Record classroom observations and teaching quality assessments for the current period.
+        </p>
+        <button onClick={addObservation} className="erp-btn bg-white border border-border-default text-text-primary h-8 px-3 text-[11px] font-bold uppercase hover:bg-gray-50 shrink-0">
+          <Plus size={14} className="mr-1" /> Add Observation
+        </button>
+      </div>
+
+      <div className="overflow-x-auto border border-border-default rounded">
+        <table className="w-full text-center border-collapse text-[11px]">
+          <thead>
+            <tr className="bg-gray-50 border-b border-border-default">
+              <th className="erp-table-header px-2 py-2">#</th>
+              <th className="erp-table-header px-3 py-2">Teacher Name</th>
+              <th className="erp-table-header px-2 py-2">Grade</th>
+              <th className="erp-table-header px-2 py-2">Subject</th>
+              <th className="erp-table-header px-2 py-2">Lesson Plan</th>
+              <th className="erp-table-header px-2 py-2">Score (1-5)</th>
+              <th className="erp-table-header px-2 py-2">Date</th>
+              <th className="erp-table-header px-3 py-2">Notes</th>
+              <th className="erp-table-header px-2 py-2"></th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-gray-100">
+            {observations.map((obs, idx) => (
+              <tr key={idx} className="hover:bg-gray-50/50">
+                <td className="px-2 py-2 text-text-secondary font-mono">{idx + 1}</td>
+                <td className="px-3 py-2">
+                  <input type="text" value={obs.teacherName} onChange={e => updateObservation(idx, 'teacherName', e.target.value)} placeholder="Teacher name" className="erp-input w-36 h-8 text-[11px]" />
+                </td>
+                <td className="px-2 py-2">
+                  <select value={obs.grade} onChange={e => updateObservation(idx, 'grade', e.target.value)} className="erp-input h-8 text-[11px] w-24">
+                    {['Standard 1','Standard 2','Standard 3','Standard 4','Standard 5','Standard 6','Standard 7','Standard 8'].map(g => (
+                      <option key={g} value={g}>{g}</option>
+                    ))}
+                  </select>
+                </td>
+                <td className="px-2 py-2">
+                  <select value={obs.subject} onChange={e => updateObservation(idx, 'subject', e.target.value)} className="erp-input h-8 text-[11px] w-28">
+                    {subjects.map(s => <option key={s} value={s}>{s}</option>)}
+                  </select>
+                </td>
+                <td className="px-2 py-2">
+                  <input type="checkbox" checked={obs.lessonPlanChecked} onChange={e => updateObservation(idx, 'lessonPlanChecked', e.target.checked)} className="w-4 h-4 accent-primary-default cursor-pointer" />
+                </td>
+                <td className="px-2 py-2">
+                  <select value={obs.qualityScore} onChange={e => updateObservation(idx, 'qualityScore', Number(e.target.value))} className="erp-input h-8 text-[11px] w-16">
+                    {[1,2,3,4,5].map(s => <option key={s} value={s}>{s}</option>)}
+                  </select>
+                </td>
+                <td className="px-2 py-2">
+                  <input type="date" value={obs.dateObserved} onChange={e => updateObservation(idx, 'dateObserved', e.target.value)} className="erp-input h-8 text-[11px] w-28" />
+                </td>
+                <td className="px-3 py-2">
+                  <input type="text" value={obs.notes} onChange={e => updateObservation(idx, 'notes', e.target.value)} placeholder="Observations..." className="erp-input w-32 h-8 text-[11px]" />
+                </td>
+                <td className="px-2 py-2">
+                  <button onClick={() => removeObservation(idx)} className="text-red-400 hover:text-red-600 transition-colors">
+                    <X size={14} />
+                  </button>
+                </td>
+              </tr>
+            ))}
+            {observations.length === 0 && (
+              <tr>
+                <td colSpan={9} className="px-4 py-12 text-center">
+                  <div className="flex flex-col items-center text-text-secondary">
+                    <ClipboardCheck size={32} className="text-text-secondary/30 mb-2" />
+                    <p className="text-[13px] font-bold">No IFA observations recorded</p>
+                    <p className="text-[11px] mt-1">Click "Add Observation" to begin recording</p>
+                  </div>
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+        {observations.length > 0 && (
+          <div className="px-4 py-3 bg-gray-50 border-t border-border-default flex items-center justify-between text-[11px] text-text-secondary">
+            <span><strong>{observations.length}</strong> observations recorded</span>
+            <span>
+              Avg Score: <strong className={observations.reduce((a, o) => a + o.qualityScore, 0) / observations.length >= 3 ? 'text-emerald-600' : 'text-amber-600'}>
+                {(observations.reduce((a, o) => a + o.qualityScore, 0) / observations.length).toFixed(1)}
+              </strong> / 5.0
+            </span>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
+
 const FinanceSection = ({ report, setReport }: { report: Partial<TermlyReport>, setReport: (d: Partial<TermlyReport>) => void }) => {
     const addExpense = () => {
         const categories = report.finance?.expenditureCategories || [];
@@ -1289,7 +1632,90 @@ const FinanceSection = ({ report, setReport }: { report: Partial<TermlyReport>, 
     )
 }
 
-const InputField = ({ label, value, onChange }: { label: string, value: number | string, onChange: (v: string) => void }) => (
+const PSLCESection = ({ report, setReport }: { report: Partial<TermlyReport>, setReport: (d: Partial<TermlyReport>) => void }) => {
+  const pslce = report.pslce || { registered: 0, sat: 0, passed: 0, male: { registered: 0, sat: 0, passed: 0 }, female: { registered: 0, sat: 0, passed: 0 }, grades: { A: 0, B: 0, C: 0, D: 0 } };
+  const passRate = pslce.sat > 0 ? Math.round((pslce.passed / pslce.sat) * 100) : 0;
+
+  const update = (field: string, value: any) => {
+    const updated = { ...report, pslce: { ...pslce, [field]: value } };
+    updated.pslce!.registered = updated.pslce!.male.registered + updated.pslce!.female.registered;
+    updated.pslce!.sat = updated.pslce!.male.sat + updated.pslce!.female.sat;
+    updated.pslce!.passed = updated.pslce!.male.passed + updated.pslce!.female.passed;
+    setReport(updated);
+  };
+
+  const updateGender = (gender: 'male' | 'female', field: string, value: number) => {
+    const next = { ...report, pslce: { ...pslce, [gender]: { ...pslce[gender], [field]: value } } };
+    next.pslce!.registered = next.pslce!.male.registered + next.pslce!.female.registered;
+    next.pslce!.sat = next.pslce!.male.sat + next.pslce!.female.sat;
+    next.pslce!.passed = next.pslce!.male.passed + next.pslce!.female.passed;
+    setReport(next);
+  };
+
+  const updateGrades = (grade: 'A' | 'B' | 'C' | 'D', value: number) => {
+    setReport({ ...report, pslce: { ...pslce, grades: { ...pslce.grades, [grade]: value } } });
+  };
+
+  return (
+    <div className="space-y-8">
+      <div className="flex items-center gap-4 p-4 bg-purple-50 border border-purple-200 rounded">
+        <GraduationCap size={24} className="text-purple-600" />
+        <p className="text-[13px] font-medium text-purple-900">
+          Primary School Leaving Certificate of Education (PSLCE) — record examination registration, candidature, and performance by gender.
+        </p>
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+        <div className="p-4 bg-white border border-border-default rounded shadow-sm">
+          <p className="text-[10px] font-bold text-text-secondary uppercase tracking-widest">Registered</p>
+          <p className="text-[24px] font-bold text-text-primary mt-1">{pslce.registered.toLocaleString()}</p>
+        </div>
+        <div className="p-4 bg-white border border-border-default rounded shadow-sm">
+          <p className="text-[10px] font-bold text-text-secondary uppercase tracking-widest">Sat</p>
+          <p className="text-[24px] font-bold text-text-primary mt-1">{pslce.sat.toLocaleString()}</p>
+        </div>
+        <div className="p-4 bg-white border border-border-default rounded shadow-sm">
+          <p className="text-[10px] font-bold text-text-secondary uppercase tracking-widest">Passed</p>
+          <p className="text-[24px] font-bold text-success mt-1">{pslce.passed.toLocaleString()}</p>
+        </div>
+        <div className="p-4 bg-white border border-border-default rounded shadow-sm">
+          <p className="text-[10px] font-bold text-text-secondary uppercase tracking-widest">Pass Rate</p>
+          <p className="text-[24px] font-bold text-primary-default mt-1">{passRate}%</p>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+        <div className="space-y-4 p-6 bg-blue-50/50 border border-blue-100 rounded">
+          <h4 className="text-[11px] font-bold text-blue-700 uppercase tracking-widest flex items-center gap-2"><Users size={14} /> Male Candidates</h4>
+          <div className="grid grid-cols-3 gap-3">
+            <InputField label="Registered" value={pslce.male.registered} onChange={(v) => updateGender('male', 'registered', Number(v))} />
+            <InputField label="Sat" value={pslce.male.sat} onChange={(v) => updateGender('male', 'sat', Number(v))} />
+            <InputField label="Passed" value={pslce.male.passed} onChange={(v) => updateGender('male', 'passed', Number(v))} />
+          </div>
+        </div>
+        <div className="space-y-4 p-6 bg-rose-50/50 border border-rose-100 rounded">
+          <h4 className="text-[11px] font-bold text-rose-700 uppercase tracking-widest flex items-center gap-2"><Users size={14} /> Female Candidates</h4>
+          <div className="grid grid-cols-3 gap-3">
+            <InputField label="Registered" value={pslce.female.registered} onChange={(v) => updateGender('female', 'registered', Number(v))} />
+            <InputField label="Sat" value={pslce.female.sat} onChange={(v) => updateGender('female', 'sat', Number(v))} />
+            <InputField label="Passed" value={pslce.female.passed} onChange={(v) => updateGender('female', 'passed', Number(v))} />
+          </div>
+        </div>
+      </div>
+
+      <div className="p-6 bg-white border border-border-default rounded space-y-4">
+        <h4 className="text-[11px] font-bold text-text-secondary uppercase tracking-widest">Grade Distribution</h4>
+        <div className="grid grid-cols-4 gap-4">
+          {(['A', 'B', 'C', 'D'] as const).map(grade => (
+            <InputField key={grade} label={`Grade ${grade}`} value={pslce.grades[grade]} onChange={(v) => updateGrades(grade, Number(v))} />
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+};
+
+const InputField = ({ label, value, onChange }: { label: string, value: number | string, onChange: (v: string) => void, key?: string }) => (
     <div className="space-y-1.5">
         <label className="text-[12px] font-bold text-text-secondary uppercase tracking-wider ml-1">{label}</label>
         <input 

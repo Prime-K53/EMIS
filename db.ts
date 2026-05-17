@@ -1,8 +1,9 @@
-
 import { Dexie, Table } from 'dexie';
 import { 
   Learner, Teacher, TeacherTransfer, TeacherLeave, Infrastructure, School, AuditLog, TermlyReport,
-  PromotionRecord, JuniorExamResult, StandardisedExamScore, PSLCEResult, PSLCESelection, Asset, FinanceSIG, InspectionRecord
+  PromotionRecord, JuniorExamResult, StandardisedExamScore, PSLCEResult, PSLCESelection, Asset, FinanceSIG, InspectionRecord,
+  AppSettings, AcademicYear, AcademicTerm, AcademicWeek, MonthlyPeriod, WeeklyReport, MonthlyReport, TermReport, ZonalSchool,
+  Department
 } from './types';
 
 export class EMISDatabase extends Dexie {
@@ -22,11 +23,20 @@ export class EMISDatabase extends Dexie {
   assets!: Table<Asset>;
   financeSIG!: Table<FinanceSIG>;
   inspections!: Table<InspectionRecord>;
+  appSettings!: Table<AppSettings>;
+  academicYears!: Table<AcademicYear>;
+  academicTerms!: Table<AcademicTerm>;
+  academicWeeks!: Table<AcademicWeek>;
+  monthlyPeriods!: Table<MonthlyPeriod>;
+  weeklyReports!: Table<WeeklyReport>;
+  monthlyReports!: Table<MonthlyReport>;
+  termReports!: Table<TermReport>;
+  zonalSchools!: Table<ZonalSchool>;
+  departments!: Table<Department>;
 
   constructor() {
     super('Malawi_EMIS_Registry');
-    // Defining database schema versions and stores.
-    this.version(9).stores({
+    this.version(10).stores({
       learners: '++id, schoolId, lin, nin, surname, gender, class, status, isSNE',
       teachers: '++id, schoolId, nin, tpNumber, status, teachingGrade, assignedStandard',
       teacherTransfers: '++id, teacherId, sourceSchoolId, destinationSchoolId, status',
@@ -34,7 +44,7 @@ export class EMISDatabase extends Dexie {
       infrastructure: '++id, type, condition',
       schools: '++id, name, emisCode, level, status, district, region, zone',
       auditLogs: '++id, schoolId, action, timestamp',
-      termlyReports: 'id, schoolId, term, year, status',
+      termlyReports: 'id, schoolId, [term+year], term, year, status',
       promotionRecords: '++id, schoolId, year, grade',
       juniorExams: '++id, schoolId, year, term, grade',
       standardExams: '++id, schoolId, year, term, studentName',
@@ -42,14 +52,124 @@ export class EMISDatabase extends Dexie {
       pslceSelections: '++id, schoolId, year',
       assets: '++id, schoolId, category',
       financeSIG: '++id, schoolId, status',
-      inspections: '++id, schoolId, date'
+      inspections: '++id, schoolId, date',
+      appSettings: '++id',
+      academicYears: '++id, year, status',
+      academicTerms: '++id, academicYearId, order',
+      academicWeeks: '++id, termId, weekNumber, status',
+      monthlyPeriods: '++id, termId, monthIndex',
+      weeklyReports: '++id, schoolId, academicYearId, termId, weekId, status',
+      monthlyReports: '++id, schoolId, academicYearId, termId, month, status',
+      termReports: '++id, schoolId, academicYearId, termId, status',
+      zonalSchools: '++id, academicYearId, schoolId'
+    });
+    this.version(11).stores({
+      learners: '++id, schoolId, academicYearId, termId, class, status, [schoolId+academicYearId+termId], lin, nin, surname, gender, isSNE',
+      teachers: '++id, schoolId, academicYearId, termId, status, [schoolId+academicYearId], nin, tpNumber, teachingGrade, assignedStandard',
+      teacherTransfers: '++id, teacherId, sourceSchoolId, destinationSchoolId, status, academicYearId',
+      teacherLeaves: '++id, teacherId, type, status, academicYearId, termId',
+      infrastructure: '++id, schoolId, academicYearId, type, condition, [schoolId+academicYearId]',
+      schools: '++id, name, emisCode, level, status, district, region, zone',
+      auditLogs: '++id, schoolId, academicYearId, action, timestamp, [schoolId+timestamp]',
+      termlyReports: 'id, schoolId, [term+year], term, year, status, academicYearId, month, weekId',
+      promotionRecords: '++id, schoolId, year, grade, academicYearId, [schoolId+year+grade]',
+      juniorExams: '++id, schoolId, year, term, grade, academicYearId, [schoolId+year+term]',
+      standardExams: '++id, schoolId, year, term, studentName, academicYearId, [schoolId+year+term]',
+      pslceResults: '++id, schoolId, year, academicYearId',
+      pslceSelections: '++id, schoolId, year, academicYearId',
+      assets: '++id, schoolId, category, academicYearId, [schoolId+lastAuditDate]',
+      financeSIG: '++id, schoolId, status, academicYearId, [schoolId+date]',
+      inspections: '++id, schoolId, date, academicYearId, [schoolId+date]',
+      appSettings: '++id',
+      academicYears: '++id, year, status',
+      academicTerms: '++id, academicYearId, order',
+      academicWeeks: '++id, termId, weekNumber, status',
+      monthlyPeriods: '++id, termId, monthIndex',
+      weeklyReports: '++id, schoolId, academicYearId, termId, weekId, status, [schoolId+academicYearId+termId+weekId]',
+      monthlyReports: '++id, schoolId, academicYearId, termId, monthlyPeriodId, status, [schoolId+academicYearId+termId+monthlyPeriodId]',
+      termReports: '++id, schoolId, academicYearId, termId, status, [schoolId+academicYearId+termId]',
+      zonalSchools: '++id, academicYearId, schoolId, [academicYearId+schoolId]'
+    });
+    this.version(12).stores({
+      departments: '++id, name, schoolId'
     });
   }
 }
 
 export const db = new EMISDatabase();
 
+async function seedAcademicCalendar() {
+  const yearCount = await db.academicYears.count();
+  if (yearCount > 0) return;
+
+  const now = new Date();
+  const currentYear = now.getFullYear();
+  const yearStart = `${currentYear}-09-01`;
+  const yearEnd = `${currentYear + 1}-08-31`;
+
+  const yearId = await db.academicYears.add({
+    year: currentYear,
+    startDate: yearStart,
+    endDate: yearEnd,
+    status: 'current',
+    createdAt: Date.now()
+  });
+
+  const termNames = ['Term 1', 'Term 2', 'Term 3'];
+  const weeksPerTerm = 13;
+  const startDate = new Date(yearStart);
+  const endDate = new Date(yearEnd);
+  const totalDays = (endDate.getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24);
+  const daysPerTerm = Math.floor(totalDays / 3);
+  const monthNames = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+
+  for (let t = 0; t < 3; t++) {
+    const termStart = new Date(startDate.getTime() + t * daysPerTerm * 24 * 60 * 60 * 1000);
+    const termEnd = new Date(startDate.getTime() + (t + 1) * daysPerTerm * 24 * 60 * 60 * 1000 - 1);
+    const termStartStr = termStart.toISOString().split('T')[0];
+    const termEndStr = termEnd.toISOString().split('T')[0];
+
+    const termId = await db.academicTerms.add({
+      academicYearId: yearId,
+      name: termNames[t],
+      startDate: termStartStr,
+      endDate: termEndStr,
+      weeksCount: weeksPerTerm,
+      order: t + 1
+    });
+
+    const daysInTerm = (termEnd.getTime() - termStart.getTime()) / (1000 * 60 * 60 * 24);
+    const daysPerWeek = daysInTerm / weeksPerTerm;
+
+    for (let w = 0; w < weeksPerTerm; w++) {
+      const weekStart = new Date(termStart.getTime() + w * daysPerWeek * 24 * 60 * 60 * 1000);
+      const weekEnd = new Date(termStart.getTime() + (w + 1) * daysPerWeek * 24 * 60 * 60 * 1000 - 1);
+      await db.academicWeeks.add({
+        termId,
+        weekNumber: w + 1,
+        startDate: weekStart.toISOString().split('T')[0],
+        endDate: weekEnd.toISOString().split('T')[0],
+        status: w < 2 ? 'active' : 'pending'
+      });
+    }
+
+    const termMonthStart = termStart.getMonth();
+    const termMonthEnd = termEnd.getMonth();
+    for (let m = termMonthStart; m <= termMonthEnd && m < 12; m++) {
+      await db.monthlyPeriods.add({
+        termId,
+        name: monthNames[m],
+        startDate: new Date(termStart.getFullYear(), m, 1).toISOString().split('T')[0],
+        endDate: new Date(termStart.getFullYear(), m + 1, 0).toISOString().split('T')[0],
+        monthIndex: m
+      });
+    }
+  }
+}
+
 export const seedDatabase = async () => {
+  await seedAcademicCalendar();
+
   const schoolCount = await db.schools.count();
   if (schoolCount === 0) {
     const schoolsToSeed: Partial<School>[] = [
@@ -275,7 +395,6 @@ export const seedDatabase = async () => {
     const school2Id = schoolIds[1];
     const school3Id = schoolIds[2];
 
-    // Seed learners across schools with various grades
     await db.learners.bulkAdd([
       { schoolId: school1Id, lin: 'LDS-2023-001', nin: 'MW-LRN-101', firstName: 'Jane', surname: 'Chirwa', gender: 'F', dateOfBirth: '2015-03-20', class: 'Standard 3', nationality: 'Malawian', isSNE: false, status: 'active', createdAt: Date.now() },
       { schoolId: school1Id, lin: 'LDS-2023-002', nin: 'MW-LRN-102', firstName: 'Chifundo', surname: 'Banda', gender: 'M', dateOfBirth: '2014-07-15', class: 'Standard 4', nationality: 'Malawian', isSNE: true, sneCategory: 'Visual', status: 'active', createdAt: Date.now() },
@@ -287,7 +406,6 @@ export const seedDatabase = async () => {
       { schoolId: school3Id, lin: 'MGS-2023-001', nin: 'MW-LRN-301', firstName: 'Innocent', surname: 'Gondwe', gender: 'M', dateOfBirth: '2008-01-14', class: 'Form 3', nationality: 'Malawian', isSNE: false, status: 'active', createdAt: Date.now() },
     ]);
 
-    // Seed teachers across schools
     await db.teachers.bulkAdd([
       { schoolId: school1Id, emisCode: 'MW-CE-001', tpNumber: 'TP/2010/8842', registrationNumber: 'REG/T/2010/001', nin: 'MW-STF-001', fullName: 'John Kayira', gender: 'M', dateOfBirth: '1985-05-12', phoneNumber: '+265 999 123 456', homeAddress: 'P.O. Box 45, Lilongwe', teachingGrade: 'Grade D', highestQualification: 'Degree in Education', specialization: 'Mathematics, Science', dateOfFirstAppointment: '2010-09-01', dateOfAppointmentToCurrentGrade: '2018-01-15', status: 'Active', responsibility: 'Head Teacher', assignedStandard: 'Standard 8', tcmRegistrationNumber: 'TCM-PR-2010-001', tcmLicenseNumber: 'L-2023-001', tcmLicenseExpiryDate: '2026-12-31', createdAt: Date.now(), updatedAt: Date.now() },
       { schoolId: school1Id, emisCode: 'MW-CE-001', tpNumber: 'TP/2015/1234', registrationNumber: 'REG/T/2015/055', nin: 'MW-STF-002', fullName: 'Mary Mwale', gender: 'F', dateOfBirth: '1992-03-20', phoneNumber: '+265 888 765 432', homeAddress: 'Area 25, Lilongwe', teachingGrade: 'Grade F', highestQualification: 'Diploma in Education', specialization: 'Chichewa, English', dateOfFirstAppointment: '2015-09-01', dateOfAppointmentToCurrentGrade: '2015-09-01', status: 'Active', assignedStandard: 'P-Klass', createdAt: Date.now(), updatedAt: Date.now() },
@@ -295,7 +413,6 @@ export const seedDatabase = async () => {
       { schoolId: school2Id, emisCode: 'MW-SO-102', tpNumber: 'TP/2018/8901', nin: 'MW-STF-004', fullName: 'Esther Manda', gender: 'F', dateOfBirth: '1990-06-15', phoneNumber: '+265 888 444 555', homeAddress: 'Bangwe, Blantyre', teachingGrade: 'Grade E', highestQualification: 'Degree in Education', specialization: 'English, History', dateOfFirstAppointment: '2018-09-01', dateOfAppointmentToCurrentGrade: '2018-09-01', status: 'Active', assignedStandard: 'Form 2', createdAt: Date.now(), updatedAt: Date.now() },
     ]);
 
-    // Seed promotion records
     await db.promotionRecords.bulkAdd([
       { schoolId: school1Id, grade: 'Standard 1', gender: 'M', promoted: 45, repeated: 5, droppedOut: 2, year: 2023 },
       { schoolId: school1Id, grade: 'Standard 1', gender: 'F', promoted: 48, repeated: 3, droppedOut: 1, year: 2023 },
@@ -305,7 +422,6 @@ export const seedDatabase = async () => {
       { schoolId: school1Id, grade: 'Standard 3', gender: 'F', promoted: 40, repeated: 4, droppedOut: 2, year: 2023 },
     ]);
 
-    // Seed exam results
     await db.standardExams.bulkAdd([
       { schoolId: school1Id, studentName: 'Chisomo Kamanga', gender: 'M', grade: 'Standard 8', chi: 88, eng: 75, arts: 60, mat: 92, psci: 85, ses: 70, total: 470, term: 1, year: 2023 },
       { schoolId: school1Id, studentName: 'Mphatso Zulu', gender: 'F', grade: 'Standard 8', chi: 92, eng: 88, arts: 70, mat: 85, psci: 90, ses: 75, total: 500, term: 1, year: 2023 },
@@ -313,7 +429,6 @@ export const seedDatabase = async () => {
       { schoolId: school2Id, studentName: 'Mary Banda', gender: 'F', grade: 'Form 2', chi: 85, eng: 90, arts: 78, mat: 88, psci: 82, ses: 80, total: 503, term: 1, year: 2023 },
     ]);
 
-    // Seed finance
     await db.financeSIG.bulkAdd([
       { schoolId: school1Id, purpose: 'Classroom Rehabilitation', amount: 1200000, status: 'Spent', date: Date.now() - 30 * 24 * 60 * 60 * 1000 },
       { schoolId: school1Id, purpose: 'Textbook Procurement', amount: 500000, status: 'Planned', date: Date.now() + 15 * 24 * 60 * 60 * 1000 },
@@ -322,7 +437,6 @@ export const seedDatabase = async () => {
       { schoolId: school2Id, purpose: 'Staff Housing', amount: 2000000, status: 'Planned', date: Date.now() + 30 * 24 * 60 * 60 * 1000 },
     ]);
 
-    // Seed assets
     await db.assets.bulkAdd([
       { schoolId: school1Id, name: 'Dell Desktop Computers', category: 'ICT Equipment', condition: 'Good', quantity: 20, serialNumber: 'DL-2022-001', lastAuditDate: Date.now() - 90 * 24 * 60 * 60 * 1000 },
       { schoolId: school1Id, name: 'HP Laser Printers', category: 'Office Equipment', condition: 'Fair', quantity: 4, serialNumber: 'HP-2021-012', lastAuditDate: Date.now() - 90 * 24 * 60 * 60 * 1000 },
@@ -330,19 +444,16 @@ export const seedDatabase = async () => {
       { schoolId: school2Id, name: 'Microscope Sets', category: 'Lab Equipment', condition: 'Good', quantity: 15, serialNumber: 'MS-2023-045', lastAuditDate: Date.now() - 60 * 24 * 60 * 60 * 1000 },
     ]);
 
-    // Seed inspections
     await db.inspections.bulkAdd([
       { schoolId: school1Id, date: Date.now() - 180 * 24 * 60 * 60 * 1000, inspectorName: 'M. Phiri', score: 85, sections: { leadership: 4, teaching: 5, community: 3 }, comments: 'Strong school leadership and teaching standards. Community engagement needs improvement.' },
       { schoolId: school1Id, date: Date.now() - 365 * 24 * 60 * 60 * 1000, inspectorName: 'G. Banda', score: 62, sections: { leadership: 3, teaching: 3, community: 4 }, comments: 'Satisfactory overall. Teaching quality requires attention in upper standards.' },
       { schoolId: school2Id, date: Date.now() - 150 * 24 * 60 * 60 * 1000, inspectorName: 'S. Nkhoma', score: 78, sections: { leadership: 4, teaching: 4, community: 3 }, comments: 'Good performance in sciences. Lab facilities well maintained.' },
     ]);
 
-    // Seed teacher transfers
     await db.teacherTransfers.bulkAdd([
       { teacherId: 1, sourceSchoolId: school1Id, destinationSchoolId: school2Id, reason: 'Career advancement - promoted to Deputy Head', status: 'Completed', initiatedDate: Date.now() - 120 * 24 * 60 * 60 * 1000, processedDate: Date.now() - 90 * 24 * 60 * 60 * 1000 },
     ]);
 
-    // Seed teacher leaves
     await db.teacherLeaves.bulkAdd([
       { teacherId: 2, type: 'Annual', startDate: '2024-12-15', endDate: '2025-01-05', reason: 'Annual leave', status: 'Approved', initiatedAt: Date.now() - 60 * 24 * 60 * 60 * 1000 },
       { teacherId: 3, type: 'Sick', startDate: '2024-11-10', endDate: '2024-11-17', reason: 'Medical procedure', status: 'Approved', initiatedAt: Date.now() - 90 * 24 * 60 * 60 * 1000 },
