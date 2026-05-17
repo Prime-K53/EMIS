@@ -9,6 +9,7 @@ import { Department } from '../types';
 const DepartmentManager: React.FC = () => {
   const departments = useLiveQuery(() => db.departments.toArray()) || [];
   const teachers = useLiveQuery(() => db.teachers.toArray()) || [];
+  const schools = useLiveQuery(() => db.schools.toArray()) || [];
   const [searchQuery, setSearchQuery] = useState('');
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editDeptId, setEditDeptId] = useState<number | null>(null);
@@ -170,10 +171,17 @@ const DepartmentManager: React.FC = () => {
                 <div className="space-y-1.5">
                   {(dept.executiveMembers || []).map((m, idx) => {
                     const teacher = teachers.find(t => t.id === m.teacherId);
+                    const school = teacher ? schools.find(s => s.id === teacher.schoolId) : null;
                     return (
-                      <div key={idx} className="flex items-center justify-between text-[12px] bg-slate-50 px-3 py-1.5 rounded">
-                        <span className="font-medium text-text-primary">{teacher?.fullName || 'Unknown'}</span>
-                        {m.role && <span className="text-[10px] font-bold text-primary-default uppercase">{m.role}</span>}
+                      <div key={idx} className="text-[12px] bg-slate-50 px-3 py-2 rounded space-y-1">
+                        <div className="flex items-center justify-between">
+                          <span className="font-medium text-text-primary">{teacher?.fullName || 'Unknown'}</span>
+                          {m.role && <span className="text-[10px] font-bold text-primary-default uppercase">{m.role}</span>}
+                        </div>
+                        <div className="flex items-center gap-3 text-[10px] text-text-secondary">
+                          {teacher?.phoneNumber && <span>{teacher.phoneNumber}</span>}
+                          {school?.name && <span>{school.name}</span>}
+                        </div>
                       </div>
                     );
                   })}
@@ -189,10 +197,17 @@ const DepartmentManager: React.FC = () => {
                 <div className="space-y-1.5">
                   {(dept.boardMembers || []).map((m, idx) => {
                     const teacher = teachers.find(t => t.id === m.teacherId);
+                    const school = teacher ? schools.find(s => s.id === teacher.schoolId) : null;
                     return (
-                      <div key={idx} className="flex items-center justify-between text-[12px] bg-slate-50 px-3 py-1.5 rounded">
-                        <span className="font-medium text-text-primary">{teacher?.fullName || 'Unknown'}</span>
-                        {m.role && <span className="text-[10px] font-bold text-primary-default uppercase">{m.role}</span>}
+                      <div key={idx} className="text-[12px] bg-slate-50 px-3 py-2 rounded space-y-1">
+                        <div className="flex items-center justify-between">
+                          <span className="font-medium text-text-primary">{teacher?.fullName || 'Unknown'}</span>
+                          {m.role && <span className="text-[10px] font-bold text-primary-default uppercase">{m.role}</span>}
+                        </div>
+                        <div className="flex items-center gap-3 text-[10px] text-text-secondary">
+                          {teacher?.phoneNumber && <span>{teacher.phoneNumber}</span>}
+                          {school?.name && <span>{school.name}</span>}
+                        </div>
                       </div>
                     );
                   })}
